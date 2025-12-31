@@ -19,12 +19,11 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
-#include <sys/mman.h>  // For mmap
+#include <sys/mman.h>  // For mmap (framebuffer cleanup)
 #include <linux/fb.h>  // For framebuffer
 #include <signal.h>
 #include <pthread.h>
 #include <errno.h>
-#include <unistd.h>  // for access
 
 // 播放器状态
 static bool is_playing = false;

@@ -10,6 +10,7 @@
 #include "led_win.h"
 #include "weather_win.h"
 #include "exit_win.h"
+#include "timer_win.h"
 #include "../common/common.h"
 #include "../image_viewer/image_viewer.h"
 #include "../media_player/audio_player.h"
@@ -70,30 +71,40 @@ void create_main_screen(void) {
     lv_obj_center(music_label);
     lv_obj_add_event_cb(music_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
 
-    // 创建LED按钮
+    // 创建LED按钮（第二行，左侧）
     lv_obj_t *led_btn = lv_btn_create(main_screen);
     lv_obj_set_size(led_btn, 150, 80);
-    lv_obj_align(led_btn, LV_ALIGN_BOTTOM_LEFT, 30, -30);
+    lv_obj_align(led_btn, LV_ALIGN_TOP_LEFT, 30, 160);
     lv_obj_t *led_label = lv_label_create(led_btn);
     lv_label_set_text(led_label, "LED控制");
     lv_obj_set_style_text_font(led_label, &SourceHanSansSC_VF, 0);
     lv_obj_center(led_label);
     lv_obj_add_event_cb(led_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
 
-    // 创建天气按钮
+    // 创建天气按钮（第二行，中间）
     lv_obj_t *weather_btn = lv_btn_create(main_screen);
     lv_obj_set_size(weather_btn, 150, 80);
-    lv_obj_align(weather_btn, LV_ALIGN_BOTTOM_MID, 0, -30);
+    lv_obj_align(weather_btn, LV_ALIGN_TOP_MID, 0, 160);
     lv_obj_t *weather_label = lv_label_create(weather_btn);
     lv_label_set_text(weather_label, "天气");
     lv_obj_set_style_text_font(weather_label, &SourceHanSansSC_VF, 0);
     lv_obj_center(weather_label);
     lv_obj_add_event_cb(weather_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
 
-    // 创建退出按钮
+    // 创建计时器按钮（第二行，右侧）
+    lv_obj_t *timer_btn = lv_btn_create(main_screen);
+    lv_obj_set_size(timer_btn, 150, 80);
+    lv_obj_align(timer_btn, LV_ALIGN_TOP_RIGHT, -30, 160);
+    lv_obj_t *timer_label = lv_label_create(timer_btn);
+    lv_label_set_text(timer_label, "计时器");
+    lv_obj_set_style_text_font(timer_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(timer_label);
+    lv_obj_add_event_cb(timer_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
+
+    // 创建退出按钮（第三行，居中）
     lv_obj_t *exit_btn = lv_btn_create(main_screen);
     lv_obj_set_size(exit_btn, 150, 80);
-    lv_obj_align(exit_btn, LV_ALIGN_BOTTOM_RIGHT, -30, -30);
+    lv_obj_align(exit_btn, LV_ALIGN_TOP_MID, 0, 260);
     lv_obj_t *exit_label = lv_label_create(exit_btn);
     lv_label_set_text(exit_label, "退出");
     lv_obj_set_style_text_font(exit_label, &SourceHanSansSC_VF, 0);
@@ -456,6 +467,10 @@ void main_window_event_handler(lv_event_t *e) {
     if (weather_window) {
         lv_obj_add_flag(weather_window, LV_OBJ_FLAG_HIDDEN);
     }
+    extern lv_obj_t *timer_window;
+    if (timer_window) {
+        lv_obj_add_flag(timer_window, LV_OBJ_FLAG_HIDDEN);
+    }
     
     // 根据按钮文本执行相应功能
     if(strcmp(text, "相册") == 0) {
@@ -468,6 +483,8 @@ void main_window_event_handler(lv_event_t *e) {
         show_led_window();
     } else if(strcmp(text, "天气") == 0) {
         show_weather_window();
+    } else if(strcmp(text, "计时器") == 0) {
+        timer_win_show();
     } else if(strcmp(text, "退出") == 0) {
         exit_application();
     }

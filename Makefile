@@ -40,7 +40,8 @@ CSRCS += src/ui/video_touch_control.c
 CSRCS += src/ui/led_win.c
 CSRCS += src/ui/weather_win.c
 CSRCS += src/ui/exit_win.c 
-CSRCS += src/ui/login_win.c 
+CSRCS += src/ui/login_win.c
+CSRCS += src/ui/timer_win.c 
 
 OBJEXT ?= .o
 
