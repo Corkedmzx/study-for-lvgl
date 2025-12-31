@@ -8,7 +8,8 @@ Check out this blog post for a step by step tutorial:
 https://blog.lvgl.io/2018-01-03/linux_fb
 
 # 启动
-CC=arm-linux-gnueabihf-gcc make
+/根目录
+make clean && make
 
 # 说明
 核心源码来源:lv_port_linux
