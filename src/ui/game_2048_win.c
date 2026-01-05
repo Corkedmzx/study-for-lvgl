@@ -461,6 +461,8 @@ static void load_history_records(void) {
     
     FILE *fp = fopen(HISTORY_FILE_PATH, "r");
     if (fp) {
+        time_t latest_timestamp = 0;  // 用于找到最新的记录
+        
         while (history_count < MAX_HISTORY_RECORDS) {
             int score;
             time_t timestamp;
@@ -473,6 +475,13 @@ static void load_history_records(void) {
                     history_records[history_count].score = score;
                     history_records[history_count].timestamp = timestamp;
                     history_records[history_count].game_time = (ret == 3) ? game_time : 0;  // 兼容旧格式
+                    
+                    // 找到时间戳最大的记录（最新的记录）
+                    if (timestamp > latest_timestamp) {
+                        latest_timestamp = timestamp;
+                        last_saved_index = history_count;
+                    }
+                    
                     history_count++;
                 } else {
                     // 跳过无效记录
@@ -483,6 +492,9 @@ static void load_history_records(void) {
             }
         }
         fclose(fp);
+        
+        printf("[2048] load_history_records: 加载了 %d 条记录, last_saved_index=%d\n", 
+               history_count, last_saved_index);
     }
 }
 
@@ -539,11 +551,14 @@ static void format_game_time_string(char *buf, size_t buf_size, int seconds) {
  * @brief 显示历史记录窗口
  */
 static void show_history_window(void) {
-    // 如果窗口已存在，直接显示
+    // 重要：每次显示历史记录窗口时，都重新加载历史记录（从文件读取最新记录）
+    // 这样可以确保显示的是最新的记录，包括刚刚保存的记录
+    load_history_records();
+    
+    // 如果窗口已存在，先删除旧窗口，然后重新创建（确保显示最新记录）
     if (history_window) {
-        lv_obj_clear_flag(history_window, LV_OBJ_FLAG_HIDDEN);
-        lv_scr_load(history_window);
-        return;
+        lv_obj_del(history_window);
+        history_window = NULL;
     }
     
     // 创建历史记录窗口
