@@ -34,17 +34,17 @@ static char* extract_json_value(char *json_str, const char *key) {
     // 处理字符串值（用引号包围）
     if (*p == '"') {
         p++; // 跳过开头的引号
-        char *end = strchr(p, '"');
-        if (!end) return NULL;
-        
-        size_t len = end - p;
-        char *value = malloc(len + 1);
-        if (!value) return NULL;
-        
-        strncpy(value, p, len);
-        value[len] = '\0';
-        
-        return value;
+    char *end = strchr(p, '"');
+    if (!end) return NULL;
+    
+    size_t len = end - p;
+    char *value = malloc(len + 1);
+    if (!value) return NULL;
+    
+    strncpy(value, p, len);
+    value[len] = '\0';
+    
+    return value;
     }
     // 处理数字值（整数或小数）
     else if ((*p >= '0' && *p <= '9') || *p == '-') {
@@ -259,7 +259,7 @@ char* get_weather_data(void) {
         json_start = response;
     }
     
-    printf("[天气] JSON开始位置: %p (偏移: %ld)\n", json_start, json_start - response);
+    printf("[天气] JSON开始位置: %p (偏移: %d)\n", json_start, (int)(json_start - response));
     
     // wttr.in API返回的JSON格式：{"current_condition":[...], "weather":[...]}
     // 解析 weather 数组中的多天数据
@@ -428,7 +428,7 @@ char* get_weather_data(void) {
                 printf("[天气] 无法找到数组结束位置\n");
                 break;
             }
-            printf("[天气] 数组结束位置: %p (距离开始: %ld)\n", array_end, array_end - array_start);
+            printf("[天气] 数组结束位置: %p (距离开始: %d)\n", array_end, (int)(array_end - array_start));
             
             // 跳过当前对象
             while (pos < array_end) {

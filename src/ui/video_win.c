@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <unistd.h>  // For access()
 #include "lvgl/lvgl.h"
 
 lv_obj_t *video_screen = NULL;  // 视频播放独立屏幕（全局变量，供其他模块访问）
@@ -135,13 +136,17 @@ void video_win_show_with_file(const char *file_path) {
     if (file_path != NULL) {
         // 播放指定的文件
         printf("开始播放视频: %s\n", file_path);
+        // 先启动触屏控制线程
+        video_touch_control_start();
+        printf("触屏控制已启动\n");
+        // 再播放视频
         if (simple_video_play(file_path)) {
             found = true;
-            printf("视频播放已启动，启动触屏控制\n");
-            // 启动触屏控制线程
-            video_touch_control_start();
+            printf("视频播放已启动\n");
         } else {
             printf("错误: 视频播放启动失败\n");
+            // 如果播放失败，停止触屏控制
+            video_touch_control_stop();
         }
     } else {
     // 查找第一个视频文件并开始播放
@@ -152,14 +157,18 @@ void video_win_show_with_file(const char *file_path) {
         if (video_files != NULL && video_count > 0) {
             current_video_index = 0;
             const char *file = video_files[0];
-                printf("开始播放视频: %s\n", file);
-                if (simple_video_play(file)) {
-                    found = true;
-                    printf("视频播放已启动，启动触屏控制\n");
-                    // 启动触屏控制线程
-                    video_touch_control_start();
-                } else {
-                    printf("错误: 视频播放启动失败\n");
+            printf("开始播放视频: %s\n", file);
+            // 先启动触屏控制线程
+            video_touch_control_start();
+            printf("触屏控制已启动\n");
+            // 再播放视频
+            if (simple_video_play(file)) {
+                found = true;
+                printf("视频播放已启动\n");
+            } else {
+                printf("错误: 视频播放启动失败\n");
+                // 如果播放失败，停止触屏控制
+                video_touch_control_stop();
             }
         }
     }
@@ -188,13 +197,14 @@ void video_win_event_handler(lv_event_t *e) {
     extern void video_touch_control_stop(void);
     video_touch_control_stop();
     // 等待触屏控制线程完全停止
-    usleep(150000);  // 150ms
+    usleep(500000);  // 500ms，确保线程完全退出
     
-    // 立即强制停止mplayer（使用SIGKILL）
+    // 立即强制停止mplayer（单线程退出逻辑，不使用互斥锁）
     extern void simple_video_force_stop(void);
     simple_video_force_stop();
-    // 等待MPlayer完全退出和framebuffer恢复
-    usleep(200000);  // 200ms，确保framebuffer已恢复
+    
+    // 等待framebuffer完全恢复
+    usleep(500000);  // 500ms，确保framebuffer已完全恢复
     
     // 清理视频模块资源
     if (touch_overlay) {
@@ -208,21 +218,77 @@ void video_win_event_handler(lv_event_t *e) {
         lv_obj_add_flag(video_screen, LV_OBJ_FLAG_HIDDEN);
     }
     
-    // 返回主屏幕
+    // 返回主屏幕（显示加载界面）
     extern lv_obj_t *main_screen;
     if (main_screen) {
         // 先确保主屏幕可见
         lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
         // 切换到主屏幕
         lv_scr_load(main_screen);
+        lv_refr_now(NULL);
         
-        // 使用快速刷新函数强制刷新整个屏幕
-        extern void fast_refresh_main_screen(void);
-        fast_refresh_main_screen();
+        // 创建加载界面（全屏遮挡层）
+        lv_obj_t *loading_screen = lv_obj_create(main_screen);
+        lv_obj_set_size(loading_screen, LV_HOR_RES, LV_VER_RES);
+        lv_obj_align(loading_screen, LV_ALIGN_TOP_LEFT, 0, 0);
+        lv_obj_set_style_bg_color(loading_screen, lv_color_hex(0xf5f5f5), 0);
+        lv_obj_set_style_bg_opa(loading_screen, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(loading_screen, 0, 0);
+        lv_obj_set_style_pad_all(loading_screen, 0, 0);
+        lv_obj_clear_flag(loading_screen, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(loading_screen, LV_OBJ_FLAG_CLICKABLE);  // 可点击，但会阻止下层操作
+        lv_obj_move_foreground(loading_screen);  // 确保在最上层
         
-        // 额外等待确保显示稳定
-        usleep(50000);  // 50ms
-        // 再次处理定时器和刷新
+        // 创建加载提示文字
+        extern lv_font_t SourceHanSansSC_VF;
+        lv_obj_t *loading_label = lv_label_create(loading_screen);
+        lv_label_set_text(loading_label, "正在返回主页...");
+        lv_obj_set_style_text_font(loading_label, &SourceHanSansSC_VF, 0);
+        lv_obj_set_style_text_color(loading_label, lv_color_hex(0x333333), 0);
+        lv_obj_align(loading_label, LV_ALIGN_CENTER, 0, -30);
+        
+        // 创建进度条
+        lv_obj_t *loading_bar = lv_bar_create(loading_screen);
+        lv_obj_set_size(loading_bar, 300, 20);
+        lv_obj_align(loading_bar, LV_ALIGN_CENTER, 0, 20);
+        lv_bar_set_range(loading_bar, 0, 100);
+        lv_bar_set_value(loading_bar, 0, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(loading_bar, lv_color_hex(0xe0e0e0), 0);
+        lv_obj_set_style_bg_color(loading_bar, lv_color_hex(0x2196F3), LV_PART_INDICATOR);
+        
+        // 立即显示加载界面
+        lv_refr_now(NULL);
+        
+            // 模拟进度条动画（给用户反馈）
+            for (int i = 0; i <= 100; i += 5) {
+                lv_bar_set_value(loading_bar, i, LV_ANIM_ON);
+                lv_timer_handler();
+                usleep(20000);  // 20ms，更平滑的动画
+            }
+            
+            // 使用快速刷新函数强制刷新整个屏幕
+            extern void fast_refresh_main_screen(void);
+            fast_refresh_main_screen();
+            
+            // 多次刷新确保主页完全加载（增加刷新次数和时间）
+            for (int i = 0; i < 15; i++) {  // 从10次增加到15次
+                lv_timer_handler();
+                lv_refr_now(NULL);
+                usleep(100000);  // 100ms，总共约1.5秒
+            }
+            
+            // 额外等待确保所有UI元素完全渲染
+            usleep(300000);  // 从200ms增加到300ms
+            lv_timer_handler();
+            lv_refr_now(NULL);
+            
+            // 再次强制刷新framebuffer
+            fast_refresh_main_screen();
+        
+        // 隐藏加载界面
+        lv_obj_del(loading_screen);
+        
+        // 最后刷新一次，确保主页显示
         lv_timer_handler();
         lv_refr_now(NULL);
     }

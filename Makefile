@@ -25,12 +25,14 @@ CSRCS += bin/SourceHanSansSC_VF.c
 
 # Add src directory source files
 CSRCS += src/common/common.c
+CSRCS += src/common/touch_device.c
 CSRCS += src/hal/hal.c
 CSRCS += src/file_scanner/file_scanner.c
 CSRCS += src/image_viewer/image_viewer.c
 CSRCS += src/media_player/simple_video_player.c
 CSRCS += src/media_player/audio_player.c
 CSRCS += src/weather/weather.c
+CSRCS += src/time_sync/time_sync.c
 CSRCS += src/ui/ui_screens.c
 CSRCS += src/ui/ui_callbacks.c
 CSRCS += src/ui/album_win.c
@@ -41,7 +43,10 @@ CSRCS += src/ui/led_win.c
 CSRCS += src/ui/weather_win.c
 CSRCS += src/ui/exit_win.c 
 CSRCS += src/ui/login_win.c
-CSRCS += src/ui/timer_win.c 
+CSRCS += src/ui/timer_win.c
+CSRCS += src/ui/clock_win.c
+CSRCS += src/ui/game_2048_win.c
+CSRCS += src/game_2048/game_2048.c 
 
 OBJEXT ?= .o
 

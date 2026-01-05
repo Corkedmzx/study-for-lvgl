@@ -312,7 +312,7 @@ static void keypad_btn_event_handler(lv_event_t *e) {
     // 处理数字键（0-9），触发蜂鸣器
     if (key >= '0' && key <= '9') {
         // 触发蜂鸣器
-        beep_once();
+        //beep_once();
         
         if (password_len < MAX_PASSWORD_LEN - 1) {
             password_input[password_len] = key;
@@ -377,14 +377,32 @@ void login_win_show(void) {
             keypad_btns[i] = lv_btn_create(login_screen);
             lv_obj_set_size(keypad_btns[i], btn_width, btn_height);
             lv_obj_set_pos(keypad_btns[i], x, y);
-            lv_obj_set_style_bg_color(keypad_btns[i], lv_color_hex(0xffffff), 0);
-            lv_obj_set_style_border_color(keypad_btns[i], lv_color_hex(0xcccccc), 0);
+            
+            // 根据按键类型设置颜色：*（取消键）为红色，#（确认键）为绿色
+            if (keypad_labels[i][0] == '*') {
+                // 取消键：红色
+                lv_obj_set_style_bg_color(keypad_btns[i], lv_color_hex(0xF44336), 0);
+                lv_obj_set_style_border_color(keypad_btns[i], lv_color_hex(0xd32f2f), 0);
+            } else if (keypad_labels[i][0] == '#') {
+                // 确认键：绿色
+                lv_obj_set_style_bg_color(keypad_btns[i], lv_color_hex(0x4CAF50), 0);
+                lv_obj_set_style_border_color(keypad_btns[i], lv_color_hex(0x388e3c), 0);
+            } else {
+                // 数字键：白色
+                lv_obj_set_style_bg_color(keypad_btns[i], lv_color_hex(0xffffff), 0);
+                lv_obj_set_style_border_color(keypad_btns[i], lv_color_hex(0xcccccc), 0);
+            }
             lv_obj_set_style_border_width(keypad_btns[i], 2, 0);
             
             lv_obj_t *btn_label = lv_label_create(keypad_btns[i]);
             lv_label_set_text(btn_label, keypad_labels[i]);
             lv_obj_set_style_text_font(btn_label, &SourceHanSansSC_VF, 0);
-            lv_obj_set_style_text_color(btn_label, lv_color_hex(0x1a1a1a), 0);
+            // 对于彩色按钮，文字使用白色；数字键使用黑色
+            if (keypad_labels[i][0] == '*' || keypad_labels[i][0] == '#') {
+                lv_obj_set_style_text_color(btn_label, lv_color_hex(0xffffff), 0);
+            } else {
+                lv_obj_set_style_text_color(btn_label, lv_color_hex(0x1a1a1a), 0);
+            }
             lv_obj_center(btn_label);
             
             lv_obj_add_event_cb(keypad_btns[i], keypad_btn_event_handler, LV_EVENT_CLICKED, NULL);

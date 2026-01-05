@@ -128,6 +128,14 @@ void music_win_show(void) {
         printf("警告: 未找到音频文件\n");
     }
     
+    // 更新播放列表
+    extern void update_playlist(void);
+    update_playlist();
+    
+    // 初始化状态回调（确保状态能正确更新）
+    extern void init_player_screen_callbacks(void);
+    init_player_screen_callbacks();
+    
     // 切换到播放器屏幕
     lv_scr_load(player_screen);
     

@@ -389,6 +389,10 @@ void prev_media_cb(lv_event_t * e) {
         audio_player_play(file_path);
     }
     
+    // 更新播放列表显示
+    extern void update_playlist(void);
+    update_playlist();
+    
     pthread_mutex_unlock(&button_mutex);
 }
 
@@ -434,6 +438,10 @@ void next_media_cb(lv_event_t * e) {
         const char *file_path = audio_files[current_audio_index];
         audio_player_play(file_path);
     }
+    
+    // 更新播放列表显示
+    extern void update_playlist(void);
+    update_playlist();
     
     pthread_mutex_unlock(&button_mutex);
 }

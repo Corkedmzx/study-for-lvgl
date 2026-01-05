@@ -7,6 +7,7 @@
 #include "ui_screens.h"
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -15,6 +16,8 @@
 #include <time.h>
 #include "lvgl/lvgl.h"
 #include "lvgl/src/font/lv_font.h"
+#include "lvgl/src/widgets/lv_canvas.h"
+#include "lvgl/src/draw/lv_draw.h"
 
 /* 声明SourceHanSansSC_VF字体 */
 #if LV_FONT_SOURCE_HAN_SANS_SC_VF
@@ -34,9 +37,15 @@ extern const lv_font_t SourceHanSansSC_VF;
 
 lv_obj_t *timer_window = NULL;  // 全局变量，供其他模块访问
 static lv_obj_t *time_label = NULL;
+static lv_obj_t *clock_canvas = NULL;
 static lv_obj_t *start_btn = NULL;
 static lv_obj_t *stop_btn = NULL;
 static lv_obj_t *reset_btn = NULL;
+
+#define CLOCK_SIZE 200
+#define CLOCK_CENTER_X (CLOCK_SIZE / 2)
+#define CLOCK_CENTER_Y (CLOCK_SIZE / 2)
+#define CLOCK_RADIUS 90
 
 static int buzzer_fd = -1;
 static int led_fd = -1;
@@ -175,6 +184,86 @@ static void led_flash_once(void) {
 }
 
 /**
+ * @brief 绘制计时器钟表
+ */
+static void draw_timer_clock_face(void) {
+    if (!clock_canvas) {
+        return;
+    }
+    
+    int hours = elapsed_seconds / 3600;
+    int minutes = (elapsed_seconds % 3600) / 60;
+    int seconds = elapsed_seconds % 60;
+    
+    // 清空画布
+    lv_canvas_fill_bg(clock_canvas, lv_color_hex(0xffffff), LV_OPA_COVER);
+    
+    // 绘制外圆
+    lv_draw_arc_dsc_t arc_dsc;
+    lv_draw_arc_dsc_init(&arc_dsc);
+    arc_dsc.color = lv_color_hex(0x333333);
+    arc_dsc.width = 3;
+    lv_canvas_draw_arc(clock_canvas, CLOCK_CENTER_X, CLOCK_CENTER_Y, CLOCK_RADIUS, 0, 360, &arc_dsc);
+    
+    // 绘制刻度（12个主要刻度）
+    for (int i = 0; i < 12; i++) {
+        double angle = (i * 30 - 90) * M_PI / 180.0;
+        int x1 = CLOCK_CENTER_X + (int)((CLOCK_RADIUS - 15) * cos(angle));
+        int y1 = CLOCK_CENTER_Y + (int)((CLOCK_RADIUS - 15) * sin(angle));
+        int x2 = CLOCK_CENTER_X + (int)(CLOCK_RADIUS * cos(angle));
+        int y2 = CLOCK_CENTER_Y + (int)(CLOCK_RADIUS * sin(angle));
+        
+        lv_draw_line_dsc_t line_dsc;
+        lv_draw_line_dsc_init(&line_dsc);
+        line_dsc.color = lv_color_hex(0x333333);
+        line_dsc.width = 3;
+        lv_point_t points[2] = {{x1, y1}, {x2, y2}};
+        lv_canvas_draw_line(clock_canvas, points, 2, &line_dsc);
+    }
+    
+    // 绘制时针（基于小时，但计时器通常只显示分钟和秒）
+    double hour_angle = (hours % 12 * 30 + minutes * 0.5 - 90) * M_PI / 180.0;
+    int hour_x = CLOCK_CENTER_X + (int)(CLOCK_RADIUS * 0.5 * cos(hour_angle));
+    int hour_y = CLOCK_CENTER_Y + (int)(CLOCK_RADIUS * 0.5 * sin(hour_angle));
+    lv_draw_line_dsc_t hour_line_dsc;
+    lv_draw_line_dsc_init(&hour_line_dsc);
+    hour_line_dsc.color = lv_color_hex(0x000000);
+    hour_line_dsc.width = 4;
+    lv_point_t hour_points[2] = {{CLOCK_CENTER_X, CLOCK_CENTER_Y}, {hour_x, hour_y}};
+    lv_canvas_draw_line(clock_canvas, hour_points, 2, &hour_line_dsc);
+    
+    // 绘制分针
+    double minute_angle = (minutes * 6 - 90) * M_PI / 180.0;
+    int minute_x = CLOCK_CENTER_X + (int)(CLOCK_RADIUS * 0.7 * cos(minute_angle));
+    int minute_y = CLOCK_CENTER_Y + (int)(CLOCK_RADIUS * 0.7 * sin(minute_angle));
+    lv_draw_line_dsc_t minute_line_dsc;
+    lv_draw_line_dsc_init(&minute_line_dsc);
+    minute_line_dsc.color = lv_color_hex(0x000000);
+    minute_line_dsc.width = 3;
+    lv_point_t minute_points[2] = {{CLOCK_CENTER_X, CLOCK_CENTER_Y}, {minute_x, minute_y}};
+    lv_canvas_draw_line(clock_canvas, minute_points, 2, &minute_line_dsc);
+    
+    // 绘制秒针
+    double second_angle = (seconds * 6 - 90) * M_PI / 180.0;
+    int second_x = CLOCK_CENTER_X + (int)(CLOCK_RADIUS * 0.85 * cos(second_angle));
+    int second_y = CLOCK_CENTER_Y + (int)(CLOCK_RADIUS * 0.85 * sin(second_angle));
+    lv_draw_line_dsc_t second_line_dsc;
+    lv_draw_line_dsc_init(&second_line_dsc);
+    second_line_dsc.color = lv_color_hex(0xff0000);
+    second_line_dsc.width = 2;
+    lv_point_t second_points[2] = {{CLOCK_CENTER_X, CLOCK_CENTER_Y}, {second_x, second_y}};
+    lv_canvas_draw_line(clock_canvas, second_points, 2, &second_line_dsc);
+    
+    // 绘制中心点
+    lv_draw_rect_dsc_t center_dsc;
+    lv_draw_rect_dsc_init(&center_dsc);
+    center_dsc.bg_color = lv_color_hex(0x000000);
+    center_dsc.bg_opa = LV_OPA_COVER;
+    center_dsc.radius = LV_RADIUS_CIRCLE;
+    lv_canvas_draw_rect(clock_canvas, CLOCK_CENTER_X - 5, CLOCK_CENTER_Y - 5, 10, 10, &center_dsc);
+}
+
+/**
  * @brief 更新时间显示
  */
 static void update_time_display(void) {
@@ -192,6 +281,11 @@ static void update_time_display(void) {
     }
     
     lv_label_set_text(time_label, time_str);
+    
+    // 更新钟表显示
+    if (clock_canvas) {
+        draw_timer_clock_face();
+    }
 }
 
 /**
@@ -401,11 +495,20 @@ void timer_win_show(void) {
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 30);
     
     // 时间显示
+    // 创建钟表画布
+    static lv_color_t clock_buf[LV_CANVAS_BUF_SIZE_TRUE_COLOR(CLOCK_SIZE, CLOCK_SIZE)];
+    clock_canvas = lv_canvas_create(timer_window);
+    lv_canvas_set_buffer(clock_canvas, clock_buf, CLOCK_SIZE, CLOCK_SIZE, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_align(clock_canvas, LV_ALIGN_CENTER, 0, -80);
+    
     time_label = lv_label_create(timer_window);
     lv_label_set_text(time_label, "00:00");
     lv_obj_set_style_text_font(time_label, &SourceHanSansSC_VF, 0);
     lv_obj_set_style_text_color(time_label, lv_color_hex(0x0066CC), 0);
-    lv_obj_align(time_label, LV_ALIGN_CENTER, 0, -50);
+    lv_obj_align(time_label, LV_ALIGN_CENTER, 0, 80);
+    
+    // 初始化钟表显示
+    draw_timer_clock_face();
     
     // 开始按钮
     start_btn = lv_btn_create(timer_window);

@@ -6,6 +6,7 @@
 #include "video_touch_control.h"
 #include "../media_player/simple_video_player.h"
 #include "../ui/ui_screens.h"
+#include "../common/touch_device.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,14 +27,10 @@
 // 手势识别阈值
 #define GESTURE_THRESHOLD 50  // 滑动最小距离
 
-// 触屏设备文件
-#define TOUCH_DEVICE "/dev/input/event0"
-
 // 触屏控制状态
 static bool control_active = false;
 static pthread_t control_thread = 0;
 static bool should_exit_control = false;
-static int touch_fd = -1;
 
 // 触摸状态
 static bool touch_pressed = false;
@@ -44,8 +41,8 @@ static int touch_last_y = 0;
 static int touch_current_x = 0;
 static int touch_current_y = 0;
 
-// 互斥锁
-static pthread_mutex_t touch_mutex = PTHREAD_MUTEX_INITIALIZER;
+// 注意：不再使用互斥锁，因为触摸状态变量只在触摸线程中使用，不需要保护
+// 这样可以提高响应速度，避免锁竞争
 
 /**
  * @brief 判断点是否在左上角控制区
@@ -76,6 +73,14 @@ static bool is_top_right_area(int x, int y) {
 }
 
 /**
+ * @brief 判断点是否在中间区域（用于滑动检测）
+ */
+static bool is_middle_area(int x, int y) {
+    return (x >= CONTROL_AREA_SIZE && x <= (SCREEN_WIDTH - CONTROL_AREA_SIZE) &&
+            y >= CONTROL_AREA_SIZE && y <= (SCREEN_HEIGHT - CONTROL_AREA_SIZE));
+}
+
+/**
  * @brief 处理点击事件
  */
 static void handle_click(int x, int y) {
@@ -89,35 +94,15 @@ static void handle_click(int x, int y) {
         // 等待触屏控制线程完全停止
         usleep(150000);  // 150ms
         
-        // 立即强制停止mplayer（使用SIGKILL）
+        // 立即强制停止mplayer（使用SIGTERM，参考video.c的简单方式）
         extern void simple_video_force_stop(void);
         simple_video_force_stop();
-        // 等待MPlayer完全退出和framebuffer恢复
-        usleep(200000);  // 200ms，确保framebuffer已恢复
+        // 等待MPlayer完全退出和framebuffer恢复（增加等待时间，确保framebuffer完全恢复）
+        usleep(500000);  // 500ms，确保framebuffer已完全恢复
         
-        // 返回主屏幕
-        extern lv_obj_t *main_screen;
-        extern lv_obj_t *video_screen;
-        if (main_screen) {
-            // 先隐藏视频屏幕
-            if (video_screen) {
-                lv_obj_add_flag(video_screen, LV_OBJ_FLAG_HIDDEN);
-            }
-            // 确保主屏幕可见
-            lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
-            // 切换到主屏幕
-            lv_scr_load(main_screen);
-            
-            // 使用快速刷新函数强制刷新整个屏幕
-            extern void fast_refresh_main_screen(void);
-            fast_refresh_main_screen();
-            
-            // 额外等待确保显示稳定
-            usleep(50000);  // 50ms
-            // 再次处理定时器和刷新
-            lv_timer_handler();
-            lv_refr_now(NULL);
-        }
+        // 设置标志，让主线程处理返回主页（不在触屏控制线程中操作LVGL，避免线程安全问题）
+        extern bool need_return_to_main;
+        need_return_to_main = true;
     } else if (is_bottom_left_area(x, y)) {
         // 左下：上一首
         printf("[触屏控制] 左下角点击: 上一首\n");
@@ -147,9 +132,14 @@ static void handle_swipe(int start_x, int start_y, int end_x, int end_y) {
     printf("[触屏控制] 处理滑动: 从 (%d, %d) 到 (%d, %d), 偏移: (%d, %d)\n", 
            start_x, start_y, end_x, end_y, dx, dy);
     
-    // 判断滑动方向
-    if (abs_dx > GESTURE_THRESHOLD && abs_dx > abs_dy) {
-        // 水平滑动
+    // 只处理中间区域的滑动
+    if (!is_middle_area(start_x, start_y)) {
+        return;  // 不在中间区域，不处理滑动
+    }
+    
+    // 判断滑动方向（需要单向滑动，主要方向距离必须大于次要方向的2倍）
+    if (abs_dx > GESTURE_THRESHOLD && abs_dx > abs_dy * 2) {
+        // 水平滑动（水平距离是垂直距离的2倍以上）
         if (dx > 0) {
             // 右滑：加速
             printf("[触屏控制] 右滑: 加速\n");
@@ -159,8 +149,8 @@ static void handle_swipe(int start_x, int start_y, int end_x, int end_y) {
             printf("[触屏控制] 左滑: 减速\n");
             simple_video_speed_down();
         }
-    } else if (abs_dy > GESTURE_THRESHOLD && abs_dy > abs_dx) {
-        // 垂直滑动
+    } else if (abs_dy > GESTURE_THRESHOLD && abs_dy > abs_dx * 2) {
+        // 垂直滑动（垂直距离是水平距离的2倍以上）
         if (dy < 0) {
             // 上划：加音量
             printf("[触屏控制] 上划: 加音量\n");
@@ -171,7 +161,7 @@ static void handle_swipe(int start_x, int start_y, int end_x, int end_y) {
             simple_video_volume_down();
         }
     } else {
-        printf("[触屏控制] 滑动距离不足，忽略\n");
+        printf("[触屏控制] 滑动距离不足或斜向滑动，忽略\n");
     }
 }
 
@@ -182,15 +172,44 @@ static void *control_thread_func(void *arg) {
     struct input_event touch;
     int ret;
     
-    // 打开触摸屏设备（参考01touch.cpp）
-    touch_fd = open(TOUCH_DEVICE, O_RDONLY);
+    // 使用统一的触摸屏设备（已在程序启动时打开）
+    int touch_fd = touch_device_get_fd();
     if (touch_fd == -1) {
-        printf("[触屏控制] 错误: 无法打开触摸屏设备 %s: %s\n", TOUCH_DEVICE, strerror(errno));
+        printf("[触屏控制] 错误: 触摸屏设备未初始化\n");
         control_active = false;
         return NULL;
     }
     
-    printf("[触屏控制] 触摸屏设备打开成功: %s\n", TOUCH_DEVICE);
+    printf("[触屏控制] 触摸屏设备打开成功: /dev/input/event0\n");
+    
+    // 启动时清空输入缓冲区中的残留事件（避免读取到启动前的触摸事件）
+    // 例如用户点击播放按钮时的触摸事件
+    int flush_count = 0;
+    while (flush_count < 50) {  // 最多读取50个事件来清空缓冲区
+        ret = read(touch_fd, &touch, sizeof(struct input_event));
+        if (ret == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break;  // 缓冲区已清空
+            }
+            break;
+        }
+        if (ret != sizeof(struct input_event)) {
+            break;
+        }
+        flush_count++;
+    }
+    
+    // 重置触摸状态（确保启动时没有残留的触摸状态）
+    touch_pressed = false;
+    touch_start_x = 0;
+    touch_start_y = 0;
+    touch_last_x = 0;
+    touch_last_y = 0;
+    touch_current_x = 0;
+    touch_current_y = 0;
+    
+    // 添加短暂延迟，等待用户释放手指（如果正在点击播放按钮）
+    usleep(200000);  // 200ms延迟
     
     // 检查视频是否还在播放，如果不在播放则退出
     while (!should_exit_control && simple_video_is_playing()) {
@@ -209,7 +228,8 @@ static void *control_thread_func(void *arg) {
             continue;
         }
         
-        pthread_mutex_lock(&touch_mutex);
+        // 移除互斥锁，因为触摸状态变量只在触摸线程中使用，不需要保护
+        // 这样可以提高响应速度，避免锁竞争
         
         // 解析X轴坐标
         if (touch.type == EV_ABS && touch.code == ABS_X) {
@@ -277,8 +297,6 @@ static void *control_thread_func(void *arg) {
             }
         }
         
-        pthread_mutex_unlock(&touch_mutex);
-        
         // 如果设置了退出标志，立即退出
         if (should_exit_control) {
             break;
@@ -292,10 +310,8 @@ static void *control_thread_func(void *arg) {
         }
     }
     
-    if (touch_fd != -1) {
-        close(touch_fd);
-        touch_fd = -1;
-    }
+    // 注意：不关闭触摸屏设备，因为它是全局共享的
+    // 设备由 touch_device 模块统一管理
     
     printf("[触屏控制] 触屏控制线程退出\n");
     control_active = false;
@@ -306,7 +322,7 @@ static void *control_thread_func(void *arg) {
  * @brief 初始化触屏控制
  */
 void video_touch_control_init(void) {
-    // 初始化互斥锁（已在静态初始化中完成）
+    // 不需要初始化，触摸屏设备由 touch_device 模块统一管理
 }
 
 /**
@@ -335,11 +351,8 @@ void video_touch_control_stop(void) {
     
     should_exit_control = true;
     
-    // 关闭触屏设备以唤醒读取线程
-    if (touch_fd != -1) {
-        close(touch_fd);
-        touch_fd = -1;
-    }
+    // 注意：不关闭触摸屏设备，因为它是全局共享的
+    // 只需要等待线程退出即可
     
     if (control_thread != 0) {
         pthread_join(control_thread, NULL);
@@ -360,4 +373,3 @@ void video_touch_control_handle_event(int x, int y, bool pressed) {
     (void)y;
     (void)pressed;
 }
-

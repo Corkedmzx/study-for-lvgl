@@ -93,6 +93,7 @@ void show_images(void) {
     lv_obj_set_flex_align(btn_container, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_all(btn_container, 10, 0);
     lv_obj_set_style_pad_gap(btn_container, 15, 0);
+    lv_obj_clear_flag(btn_container, LV_OBJ_FLAG_SCROLLABLE);  // 取消滑动列表格式，固定格式
     
     // 上一张按钮
     lv_obj_t *prev_btn = lv_btn_create(btn_container);

@@ -2,11 +2,11 @@
  * @file simple_video_player.c
  * @brief 简单的MPlayer全屏视频播放器实现
  * 
- * 实现方案：
- * 1. 使用MPlayer全屏播放视频（-vo fbdev）
- * 2. 通过管道发送控制命令
- * 3. 触屏手势控制（在独立线程中处理）
- * 4. 播放线程和控制线程分离
+ * 实现方案（参考video.c，但添加FIFO控制和性能优化）：
+ * 1. 使用MPlayer全屏播放视频（-vo fbdev2）
+ * 2. 使用fork+execlp启动（参考video.c）
+ * 3. 使用FIFO多线程控制（恢复FIFO，用于控制功能）
+ * 4. 添加性能优化参数（-framedrop等）
  */
 
 #include "simple_video_player.h"
@@ -19,8 +19,6 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
-#include <sys/mman.h>  // For mmap (framebuffer cleanup)
-#include <linux/fb.h>  // For framebuffer
 #include <signal.h>
 #include <pthread.h>
 #include <errno.h>
@@ -57,361 +55,230 @@ static bool is_video_file(const char *file_path) {
  * @brief 发送MPlayer控制命令
  */
 static void send_mplayer_command(const char *cmd) {
-    if (cmd != NULL) {
-        // 如果FIFO还没打开，尝试打开
-        if (mplayer_control_pipe == -1) {
-            mplayer_control_pipe = open("/tmp/mplayer_fifo", O_WRONLY | O_NONBLOCK);
-            if (mplayer_control_pipe == -1) {
-                return;  // 无法打开FIFO
-            }
-        }
-        
-        if (mplayer_control_pipe != -1) {
-            (void)write(mplayer_control_pipe, cmd, strlen(cmd));
-            (void)write(mplayer_control_pipe, "\n", 1);
-            fsync(mplayer_control_pipe);
-        }
+    if (cmd != NULL && mplayer_control_pipe != -1) {
+        char full_cmd[256];
+        snprintf(full_cmd, sizeof(full_cmd), "%s\n", cmd);
+        (void)write(mplayer_control_pipe, full_cmd, strlen(full_cmd));
+        fsync(mplayer_control_pipe);
     }
 }
 
 /**
- * @brief 启动MPlayer进程（全屏播放）
+ * @brief 启动MPlayer进程（参考video.c，但添加FIFO控制和性能优化参数）
  */
 static bool start_mplayer(const char *file_path) {
-    // 创建FIFO管道（参考MPlayer_text.cpp）
+    // 先停止之前的MPlayer进程（如果有，参考video.c的video_stop）
+    if (mplayer_pid != -1) {
+        kill(mplayer_pid, SIGTERM);
+        waitpid(mplayer_pid, NULL, 0);
+        mplayer_pid = -1;
+    }
+    
+    // 创建FIFO管道（用于多线程控制）
     (void)system("rm -f /tmp/mplayer_fifo");
     if (mkfifo("/tmp/mplayer_fifo", 0666) == -1 && errno != EEXIST) {
         perror("mkfifo");
         return false;
     }
     
+    // 使用fork+execlp方式启动MPlayer（参考video.c，但添加-slave和性能优化参数）
     mplayer_pid = fork();
-    if (mplayer_pid < 0) {
+    if (mplayer_pid == 0) {
+        // 子进程：执行MPlayer（参考video.c，但添加-slave和性能优化）
+        // 设置framebuffer环境（参考video.c）
+        putenv("SDL_VIDEODRIVER=fbcon");
+        putenv("SDL_FBDEV=/dev/fb0");
+        
+        // 优先尝试mplayer，结合参考代码的简单方式和已验证可用的格式
+        // 开发板信息：虚拟分辨率800x1440，色深32位，实际显示800x480
+        // 已验证：fbdev + bgra格式能正常播放视频
+        // 方案：使用参考代码的参数顺序和简单方式，但使用fbdev + bgra格式（已验证可用）
+        // 注意：保留-slave和FIFO用于触控功能，但退出时使用参考代码的简单方式
+        execlp("mplayer", "mplayer",
+              "-vo", "fbdev2",        // 使用fbdev（已验证可用，参考video.c使用fbdev2但改为fbdev）
+              "-fs",
+              "-zoom",
+              "-quiet",
+              "-slave",              // 保留slave模式用于FIFO控制（触控功能需要）
+              "-input", "file=/tmp/mplayer_fifo",  // FIFO控制（触控功能需要）
+              "-x", "800",           // 强制输出宽度为800（参考video.c）
+              "-y", "480",           // 强制输出高度为480（参考video.c）
+              "-vf", "format=bgra",  // 转换为BGRA格式（32位，已验证可用）
+              "-lavdopts", "skiploopfilter=all",  // 快速解码（参考video.c）
+              "-framedrop",          // 抽帧减少卡顿（性能优化）
+              "-autosync", "30",     // 自动同步（性能优化）
+              "-cache", "32768",     // 缓存大小（性能优化）
+              "-cache-min", "50",    // 最小缓存（性能优化）
+              "-ao", "oss",          // 音频输出
+              file_path,
+              NULL);
+              
+        // 如果所有方案都失败，直接退出
+        perror("Failed to play video with mplayer (all methods failed)");
+        exit(1);
+    } else if (mplayer_pid < 0) {
+        // fork失败
         perror("fork");
         return false;
     }
     
-    if (mplayer_pid == 0) {  // 子进程
-        // 不重定向stderr，保留错误信息以便调试
-        // 如果需要静默模式，可以取消下面的注释
-        // int null_fd = open("/dev/null", O_WRONLY);
-        // if (null_fd != -1) {
-        //     dup2(null_fd, STDERR_FILENO);
-        //     close(null_fd);
-        // }
-        
-        // MPlayer参数（参考MPlayer_text.cpp）
-        const char *mplayer_paths[] = {
-            "/bin/mplayer",
-            "./mplayer",
-            "/usr/bin/mplayer",
-            "/system/bin/mplayer",
-            "mplayer",
-            NULL
-        };
-        
-        char *args[35];  // 增加参数数组大小以容纳更多优化参数
-        int arg_count = 0;
-        args[arg_count++] = NULL;  // 占位符
-        args[arg_count++] = "-slave";
-        args[arg_count++] = "-quiet";
-        args[arg_count++] = "-input";
-        args[arg_count++] = "file=/tmp/mplayer_fifo";
-        args[arg_count++] = "-vo";
-        args[arg_count++] = "fbdev";  // 全屏输出到framebuffer
-        args[arg_count++] = "-vf";
-        args[arg_count++] = "scale=800:480";  // 缩放视频到屏幕尺寸
-        args[arg_count++] = "-zoom";  // 缩放以适应屏幕
-        args[arg_count++] = "-fs";  // 全屏模式
-        // 性能优化参数（根据MPlayer错误提示添加）
-        // 注意：移除 -framedrop 可以减少丢帧，但可能导致播放卡顿
-        // 如果系统性能足够，可以注释掉下面这行来减少丢帧
-        args[arg_count++] = "-framedrop";  // 丢帧以保持同步，解决视频输出慢的问题
-        args[arg_count++] = "-autosync";
-        args[arg_count++] = "30";  // 自动同步，30是推荐值，解决音频驱动问题
-        args[arg_count++] = "-cache";
-        args[arg_count++] = "32768";  // 增加缓存到32MB（从16MB增加），减少因I/O导致的丢帧，提高流畅度
-        args[arg_count++] = "-cache-min";  // 最小缓存百分比
-        args[arg_count++] = "50";  // 缓存到50%才开始播放，减少卡顿
-        // 注意：MPlayer内部已经使用了高效的I/O机制（包括预读和缓存）
-        // 对于本地文件，MPlayer会自动优化I/O，mmap的效果有限
-        args[arg_count++] = "-lavdopts";
-        // 解码优化参数：
-        // fast: 快速解码模式（当前使用）
-        // threads=2: 使用2个线程进行解码（如果MPlayer版本不支持，可以移除threads参数）
-        // skiploopfilter=all: 跳过循环滤波（可提高性能，但可能降低画质，作为注释保留）
-        // 注意：如果遇到"threads option must be an integer"错误，请移除threads参数，只使用"fast"
-        args[arg_count++] = "fast";  // 只使用快速解码模式（如果threads不支持，使用这个）
-        // args[arg_count++] = "fast:threads=2";  // 如果MPlayer支持threads参数，可以使用这行替代上面一行
-        // 音频输出优化：优先尝试OSS（通常比ALSA更快），如果失败会自动回退
-        args[arg_count++] = "-ao";
-        args[arg_count++] = "oss";  // 使用OSS音频输出（如果系统支持）
-        args[arg_count++] = (char *)file_path;
-        args[arg_count] = NULL;
-        
-        // 检查视频文件是否存在
-        struct stat st;
-        if (stat(file_path, &st) != 0) {
-            exit(1);
-        }
-        
-        // 尝试执行MPlayer
-        for (int i = 0; mplayer_paths[i] != NULL; i++) {
-            args[0] = (char *)mplayer_paths[i];
-            execvp(args[0], args);
-        }
-        
-        exit(1);
-    } else {  // 父进程
-        // 等待MPlayer启动
-        usleep(1000000);  // 1秒，等待FIFO创建和MPlayer启动
-        
-        // 打开FIFO用于发送控制命令
+    // 父进程：等待MPlayer启动
+    usleep(1500000);  // 1.5秒，等待MPlayer启动
+    
+    // 验证进程是否还在运行
+    int status;
+    pid_t result = waitpid(mplayer_pid, &status, WNOHANG);
+    if (result == mplayer_pid) {
+        // 进程已退出
+        printf("错误: MPlayer启动后立即退出\n");
+        mplayer_pid = -1;
+        return false;
+    } else if (result == -1) {
+        // 错误
+        perror("waitpid");
+        mplayer_pid = -1;
+        return false;
+    }
+    
+    // 打开FIFO用于发送控制命令
+    mplayer_control_pipe = open("/tmp/mplayer_fifo", O_WRONLY | O_NONBLOCK);
+    if (mplayer_control_pipe == -1) {
+        printf("警告: 无法打开MPlayer控制FIFO\n");
+        // 尝试再次打开
+        usleep(500000);  // 500ms
         mplayer_control_pipe = open("/tmp/mplayer_fifo", O_WRONLY | O_NONBLOCK);
         if (mplayer_control_pipe == -1) {
-            printf("警告: 无法打开MPlayer控制FIFO\n");
-            // 继续执行，可能MPlayer还在启动中
-        }
-        
-        // 检查进程是否还在运行（多次检查，确保MPlayer真正启动）
-        int status;
-        pid_t result;
-        int check_count = 0;
-        const int max_checks = 5;  // 最多检查5次
-        
-        while (check_count < max_checks) {
-            result = waitpid(mplayer_pid, &status, WNOHANG);
-        if (result == mplayer_pid) {
-                // MPlayer退出，启动失败
-            printf("错误: MPlayer启动失败，退出状态: %d\n", WEXITSTATUS(status));
-                if (mplayer_control_pipe != -1) {
-                    close(mplayer_control_pipe);
-                }
-                mplayer_control_pipe = -1;
-                mplayer_pid = -1;
-                return false;
-            } else if (result == 0) {
-                // 进程还在运行，检查是否能够写入FIFO
-                if (mplayer_control_pipe != -1) {
-                    // 可以写入FIFO，再等待一下确保MPlayer真正启动（不是立即退出）
-                    usleep(500000);  // 500ms，确保MPlayer真正开始播放
-                    // 再次检查进程是否还在运行
-                    result = waitpid(mplayer_pid, &status, WNOHANG);
-                    if (result == 0) {
-                        // 进程还在运行，说明启动成功
-                        printf("MPlayer已启动，PID: %d\n", mplayer_pid);
-                        return true;
-                    } else if (result == mplayer_pid) {
-                        // MPlayer在启动后退出
-                        printf("错误: MPlayer启动后立即退出，退出状态: %d\n", WEXITSTATUS(status));
-                        if (mplayer_control_pipe != -1) {
-                            close(mplayer_control_pipe);
-                        }
-                        mplayer_control_pipe = -1;
-                        mplayer_pid = -1;
-                        return false;
-                    }
-                } else {
-                    // FIFO还未准备好，再等待一下
-                    usleep(200000);  // 200ms
-                    check_count++;
-                    // 重新尝试打开FIFO
-                    mplayer_control_pipe = open("/tmp/mplayer_fifo", O_WRONLY | O_NONBLOCK);
-                }
-            } else {
-                // waitpid错误
-                printf("警告: waitpid错误: %s\n", strerror(errno));
-                break;
-            }
-        }
-        
-        // 如果检查了max_checks次后进程还在运行，再等待并检查一次
-        usleep(500000);  // 500ms
-        result = waitpid(mplayer_pid, &status, WNOHANG);
-        if (result == 0) {
-            // 进程还在运行，认为启动成功
-            printf("MPlayer已启动，PID: %d\n", mplayer_pid);
-            return true;
-        } else if (result == mplayer_pid) {
-            // MPlayer退出
-            printf("错误: MPlayer启动后退出，退出状态: %d\n", WEXITSTATUS(status));
-            if (mplayer_control_pipe != -1) {
-                close(mplayer_control_pipe);
-            }
-            mplayer_control_pipe = -1;
-            mplayer_pid = -1;
-            return false;
-        } else {
-            printf("错误: MPlayer启动失败\n");
-            if (mplayer_control_pipe != -1) {
-                close(mplayer_control_pipe);
-            }
-            mplayer_control_pipe = -1;
-            mplayer_pid = -1;
-            return false;
+            printf("错误: 无法打开MPlayer控制FIFO\n");
+            // 即使FIFO打开失败，如果进程在运行，也认为启动成功
         }
     }
+    
+    printf("[视频播放] MPlayer已启动，PID: %d\n", mplayer_pid);
+    return true;
 }
 
 /**
- * @brief 强制停止MPlayer进程（立即使用SIGKILL）
+ * @brief 停止MPlayer进程（参考video.c，但先尝试FIFO命令）
  */
-static void force_stop_mplayer(void) {
+static void stop_mplayer(void) {
     if (mplayer_pid != -1) {
-        // 立即强制终止，不等待
-        kill(mplayer_pid, SIGKILL);
-        usleep(50000);  // 等待50ms确保进程终止
-        waitpid(mplayer_pid, NULL, WNOHANG);  // 清理僵尸进程
+        // 先尝试通过FIFO发送quit命令
+        if (mplayer_control_pipe != -1) {
+            send_mplayer_command("quit");
+            close(mplayer_control_pipe);
+            mplayer_control_pipe = -1;
+            usleep(300000);  // 等待300ms
+        }
         
+        // 使用SIGTERM终止进程（参考video.c）
+        kill(mplayer_pid, SIGTERM);
+        // 等待进程退出（参考video.c的waitpid）
+        waitpid(mplayer_pid, NULL, 0);
         mplayer_pid = -1;
-    }
-    
-    if (mplayer_control_pipe != -1) {
-        close(mplayer_control_pipe);
-        mplayer_control_pipe = -1;
     }
     
     // 清理FIFO
     (void)system("rm -f /tmp/mplayer_fifo");
-    
-    // 清理framebuffer，填充白色（确保framebuffer完全恢复）
-    int fb_fd = open("/dev/fb0", O_RDWR);
-    if (fb_fd != -1) {
-        struct fb_var_screeninfo vinfo;
-        struct fb_fix_screeninfo finfo;
-        if (ioctl(fb_fd, FBIOGET_VSCREENINFO, &vinfo) == 0 &&
-            ioctl(fb_fd, FBIOGET_FSCREENINFO, &finfo) == 0) {
-            long screensize = finfo.smem_len;
-            char *fbp = (char *)mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
-            if ((intptr_t)fbp != -1) {
-                // 填充白色（0xFFFFFFFF），这样LVGL可以正确显示
-                memset(fbp, 0xFF, screensize);
-                // 确保写入完成
-                msync(fbp, screensize, MS_SYNC);
-                munmap(fbp, screensize);
-            }
-        }
-        close(fb_fd);
-    }
 }
 
 /**
- * @brief 停止MPlayer进程
+ * @brief 强制停止MPlayer进程（参考video.c，但先尝试FIFO命令）
  */
-static void stop_mplayer(void) {
+static void force_stop_mplayer(void) {
+    printf("[视频播放] 开始强制停止MPlayer\n");
+    
+    // 先尝试通过FIFO发送quit命令
     if (mplayer_control_pipe != -1) {
         send_mplayer_command("quit");
         close(mplayer_control_pipe);
         mplayer_control_pipe = -1;
+        usleep(200000);  // 等待200ms
     }
     
+    // 使用SIGTERM终止进程（参考video.c）
     if (mplayer_pid != -1) {
-        int status;
-        pid_t result;
-        int wait_count = 0;
-        const int max_wait = 20;  // 最多等待2秒
-        
-        while (wait_count < max_wait) {
-            result = waitpid(mplayer_pid, &status, WNOHANG);
-            if (result > 0) {
-                break;
-            } else if (result == 0) {
-                usleep(100000);  // 100ms
-                wait_count++;
-            } else {
-                break;
-            }
-        }
-        
-        // 如果进程还在运行，强制终止
-        if (wait_count >= max_wait) {
-            if (kill(mplayer_pid, SIGTERM) == 0) {
-                usleep(200000);
-                result = waitpid(mplayer_pid, &status, WNOHANG);
-                if (result == 0) {
-                    kill(mplayer_pid, SIGKILL);
-                    usleep(100000);
-                    waitpid(mplayer_pid, NULL, 0);
-                }
-            }
-        }
-        
+        kill(mplayer_pid, SIGTERM);
+        waitpid(mplayer_pid, NULL, 0);
         mplayer_pid = -1;
     }
     
     // 清理FIFO
     (void)system("rm -f /tmp/mplayer_fifo");
     
-    // 清理framebuffer，填充白色（而不是黑色，以便LVGL可以正确显示）
-    int fb_fd = open("/dev/fb0", O_RDWR);
-    if (fb_fd != -1) {
-        struct fb_var_screeninfo vinfo;
-        struct fb_fix_screeninfo finfo;
-        if (ioctl(fb_fd, FBIOGET_VSCREENINFO, &vinfo) == 0 &&
-            ioctl(fb_fd, FBIOGET_FSCREENINFO, &finfo) == 0) {
-            long screensize = finfo.smem_len;
-            char *fbp = (char *)mmap(0, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
-            if ((intptr_t)fbp != -1) {
-                // 填充白色（0xFFFFFFFF），这样LVGL可以正确显示
-                memset(fbp, 0xFF, screensize);
-                // 确保写入完成
-                msync(fbp, screensize, MS_SYNC);
-                munmap(fbp, screensize);
-            }
-        }
-        close(fb_fd);
-    }
+    printf("[视频播放] MPlayer已完全停止\n");
 }
 
 /**
  * @brief 初始化视频播放器
  */
 void simple_video_init(void) {
-    // 初始化互斥锁（已在静态初始化中完成）
+    is_playing = false;
+    is_paused = false;
+    mplayer_pid = -1;
+    mplayer_control_pipe = -1;
+    playback_speed = 1.0f;
 }
 
 /**
- * @brief 播放视频文件
+ * @brief 播放视频文件（全屏）
+ * @param file_path 视频文件路径
+ * @return 成功返回true，失败返回false
  */
 bool simple_video_play(const char *file_path) {
-    if (file_path == NULL) {
-        return false;
-    }
-    
     pthread_mutex_lock(&player_mutex);
     
     // 如果正在播放，先停止并等待完全退出
     if (is_playing) {
         stop_mplayer();
         is_playing = false;
+        is_paused = false;
         // 等待MPlayer完全退出和framebuffer恢复
-        usleep(500000);  // 500ms，确保MPlayer完全退出和framebuffer恢复
+        usleep(500000);  // 500ms
     }
     
-    // 启动MPlayer
-    if (!start_mplayer(file_path)) {
-        is_playing = false;  // 确保状态正确
-        is_paused = false;
+    if (file_path == NULL || !is_video_file(file_path)) {
         pthread_mutex_unlock(&player_mutex);
         return false;
     }
     
-    is_playing = true;
-    is_paused = false;  // 初始状态为播放中
-    playback_speed = 1.0f;
+    // 启动MPlayer
+    if (start_mplayer(file_path)) {
+        is_playing = true;
+        is_paused = false;
+        playback_speed = 1.0f;
+        pthread_mutex_unlock(&player_mutex);
+        return true;
+    }
     
     pthread_mutex_unlock(&player_mutex);
-    return true;
+    return false;
 }
 
 /**
- * @brief 停止播放
+ * @brief 停止播放（参考video.c，但先尝试FIFO命令）
  */
 void simple_video_stop(void) {
     pthread_mutex_lock(&player_mutex);
     
     if (is_playing) {
-        stop_mplayer();
+        // 先尝试通过FIFO发送quit命令
+        if (mplayer_control_pipe != -1) {
+            send_mplayer_command("quit");
+            close(mplayer_control_pipe);
+            mplayer_control_pipe = -1;
+            usleep(200000);  // 等待200ms
+        }
+        
+        // 使用SIGTERM终止进程（参考video.c）
+        if (mplayer_pid != -1) {
+            kill(mplayer_pid, SIGTERM);
+            waitpid(mplayer_pid, NULL, 0);
+            mplayer_pid = -1;
+        }
+        
+        // 清理FIFO
+        (void)system("rm -f /tmp/mplayer_fifo");
+        
         is_playing = false;
         is_paused = false;
     }
@@ -420,18 +287,15 @@ void simple_video_stop(void) {
 }
 
 /**
- * @brief 强制停止播放（立即使用SIGKILL终止mplayer进程）
+ * @brief 强制停止播放（单线程退出逻辑，不使用互斥锁）
  */
 void simple_video_force_stop(void) {
-    pthread_mutex_lock(&player_mutex);
+    // 不使用互斥锁，直接停止（单线程退出逻辑）
+    force_stop_mplayer();
     
-    if (is_playing) {
-        force_stop_mplayer();
-        is_playing = false;
-        is_paused = false;
-    }
-    
-    pthread_mutex_unlock(&player_mutex);
+    // 更新状态（不使用互斥锁）
+    is_playing = false;
+    is_paused = false;
 }
 
 /**
@@ -480,31 +344,40 @@ void simple_video_prev(void) {
         }
         
         if (index == start_index) {
-            break;  // 没有找到其他视频文件
+            // 已经循环一圈，没有找到其他视频
+            pthread_mutex_unlock(&player_mutex);
+            return;
         }
         
-        if (video_files[index] != NULL) {
-            const char *next_file = video_files[index];
-            // 先停止当前播放并重置状态
-            // 使用force_stop确保framebuffer完全清理
-            force_stop_mplayer();
-            is_playing = false;
-            is_paused = false;
-            // 等待MPlayer完全退出和framebuffer恢复
-            usleep(500000);  // 500ms，确保MPlayer完全退出和framebuffer恢复
+        const char *prev_file = video_files[index];
+        if (prev_file != NULL && is_video_file(prev_file)) {
+            // 停止当前播放
+            if (mplayer_control_pipe != -1) {
+                send_mplayer_command("quit");
+                close(mplayer_control_pipe);
+                mplayer_control_pipe = -1;
+            }
             
-            // 释放锁，让simple_video_play重新获取锁
-            pthread_mutex_unlock(&player_mutex);
+            if (mplayer_pid != -1) {
+                kill(mplayer_pid, SIGTERM);
+                waitpid(mplayer_pid, NULL, 0);
+                mplayer_pid = -1;
+            }
+            
+            (void)system("rm -f /tmp/mplayer_fifo");
+            usleep(300000);
             
             // 播放新视频
-            printf("切换到视频: %s\n", next_file);
-            if (simple_video_play(next_file)) {
-                current_video_index = index;
-                printf("视频切换成功，新索引: %d\n", current_video_index);
+            printf("切换到视频: %s\n", prev_file);
+            current_video_index = index;
+            if (start_mplayer(prev_file)) {
+                is_playing = true;
+                is_paused = false;
             } else {
-                printf("错误: 无法播放视频: %s\n", next_file);
+                is_playing = false;
+                is_paused = false;
             }
-            return;  // 已经释放锁，直接返回
+            break;
         }
     } while (index != start_index);
     
@@ -542,31 +415,40 @@ void simple_video_next(void) {
         }
         
         if (index == start_index) {
-            break;  // 没有找到其他视频文件
+            // 已经循环一圈，没有找到其他视频
+            pthread_mutex_unlock(&player_mutex);
+            return;
         }
         
-        if (video_files[index] != NULL) {
-            const char *next_file = video_files[index];
-            // 先停止当前播放并重置状态
-            // 使用force_stop确保framebuffer完全清理
-            force_stop_mplayer();
-            is_playing = false;
-            is_paused = false;
-            // 等待MPlayer完全退出和framebuffer恢复
-            usleep(500000);  // 500ms，确保MPlayer完全退出和framebuffer恢复
+        const char *next_file = video_files[index];
+        if (next_file != NULL && is_video_file(next_file)) {
+            // 停止当前播放
+            if (mplayer_control_pipe != -1) {
+                send_mplayer_command("quit");
+                close(mplayer_control_pipe);
+                mplayer_control_pipe = -1;
+            }
             
-            // 释放锁，让simple_video_play重新获取锁
-            pthread_mutex_unlock(&player_mutex);
+            if (mplayer_pid != -1) {
+                kill(mplayer_pid, SIGTERM);
+                waitpid(mplayer_pid, NULL, 0);
+                mplayer_pid = -1;
+            }
+            
+            (void)system("rm -f /tmp/mplayer_fifo");
+            usleep(300000);
             
             // 播放新视频
             printf("切换到视频: %s\n", next_file);
-            if (simple_video_play(next_file)) {
-                current_video_index = index;
-                printf("视频切换成功，新索引: %d\n", current_video_index);
+            current_video_index = index;
+            if (start_mplayer(next_file)) {
+                is_playing = true;
+                is_paused = false;
             } else {
-                printf("错误: 无法播放视频: %s\n", next_file);
+                is_playing = false;
+                is_paused = false;
             }
-            return;  // 已经释放锁，直接返回
+            break;
         }
     } while (index != start_index);
     
@@ -585,9 +467,10 @@ void simple_video_speed_up(void) {
             playback_speed = 2.0f;
         }
         
-        char cmd[32];
-        snprintf(cmd, sizeof(cmd), "speed_set %.1f", (double)playback_speed);
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "speed_set %.1f", playback_speed);
         send_mplayer_command(cmd);
+        printf("播放速度: %.1fx\n", playback_speed);
     }
     
     pthread_mutex_unlock(&player_mutex);
@@ -605,9 +488,10 @@ void simple_video_speed_down(void) {
             playback_speed = 0.5f;
         }
         
-        char cmd[32];
-        snprintf(cmd, sizeof(cmd), "speed_set %.1f", (double)playback_speed);
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "speed_set %.1f", playback_speed);
         send_mplayer_command(cmd);
+        printf("播放速度: %.1fx\n", playback_speed);
     }
     
     pthread_mutex_unlock(&player_mutex);
@@ -641,6 +525,7 @@ void simple_video_volume_down(void) {
 
 /**
  * @brief 获取播放状态
+ * @return 是否正在播放
  */
 bool simple_video_is_playing(void) {
     bool result;
@@ -654,6 +539,5 @@ bool simple_video_is_playing(void) {
  * @brief 清理资源
  */
 void simple_video_cleanup(void) {
-    simple_video_stop();
+    simple_video_force_stop();
 }
-

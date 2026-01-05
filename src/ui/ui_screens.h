@@ -49,5 +49,20 @@ void main_window_event_handler(lv_event_t * e);
  */
 void exit_program_cb(lv_event_t * e);
 
+/**
+ * @brief 更新播放列表显示
+ */
+void update_playlist(void);
+
+/**
+ * @brief 通过索引播放音频
+ */
+void play_audio_by_index(int index);
+
+/**
+ * @brief 初始化播放器屏幕的状态回调
+ */
+void init_player_screen_callbacks(void);
+
 #endif /* UI_SCREENS_H */
 

@@ -120,7 +120,7 @@ static void update_weather_display(lv_obj_t *cont) {
             // 日期
             lv_obj_t *label = lv_label_create(day_panel);
             lv_label_set_text(label, lines[0] ? lines[0] : "日期");
-            lv_obj_set_style_text_font(label, &SourceHanSansSC_VF, 0);
+        lv_obj_set_style_text_font(label, &SourceHanSansSC_VF, 0);
             lv_obj_set_style_text_color(label, lv_color_hex(0x0066CC), 0);
             lv_obj_align(label, LV_ALIGN_TOP_MID, 0, y_offset);
             y_offset += 30;
@@ -147,20 +147,20 @@ static void update_weather_display(lv_obj_t *cont) {
                 lv_obj_align(temp, LV_ALIGN_TOP_MID, 0, y_offset);
                 y_offset += 30;
             }
-            
+                
             if (line_count > 3) {
-                // 天气状况
-                lv_obj_t *weather = lv_label_create(day_panel);
+                    // 天气状况
+                    lv_obj_t *weather = lv_label_create(day_panel);
                 lv_label_set_text(weather, lines[3] ? lines[3] : "天气");
                 lv_obj_set_style_text_font(weather, &SourceHanSansSC_VF, 0);
                 lv_obj_set_style_text_color(weather, lv_color_hex(0x009900), 0);
                 lv_obj_align(weather, LV_ALIGN_TOP_MID, 0, y_offset);
                 y_offset += 30;
             }
-            
+                    
             if (line_count > 4) {
-                // 风力
-                lv_obj_t *wind = lv_label_create(day_panel);
+                        // 风力
+                        lv_obj_t *wind = lv_label_create(day_panel);
                 char wind_text[64];
                 snprintf(wind_text, sizeof(wind_text), "风力: %s", lines[4] ? lines[4] : "--");
                 lv_label_set_text(wind, wind_text);
@@ -168,7 +168,7 @@ static void update_weather_display(lv_obj_t *cont) {
                 lv_obj_align(wind, LV_ALIGN_TOP_MID, 0, y_offset);
                 y_offset += 25;
             }
-            
+                        
             if (line_count > 5) {
                 // 湿度
                 lv_obj_t *humidity = lv_label_create(day_panel);

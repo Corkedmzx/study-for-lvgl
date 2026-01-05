@@ -17,6 +17,7 @@
 #include "../media_player/simple_video_player.h"
 #include "../file_scanner/file_scanner.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "lvgl/lvgl.h"
 #include "lvgl/src/font/lv_font.h"
@@ -101,13 +102,36 @@ void create_main_screen(void) {
     lv_obj_center(timer_label);
     lv_obj_add_event_cb(timer_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
 
-    // 创建退出按钮（第三行，居中）
+    // 创建时钟按钮（第三行，左侧）
+    lv_obj_t *clock_btn = lv_btn_create(main_screen);
+    lv_obj_set_size(clock_btn, 150, 80);
+    lv_obj_align(clock_btn, LV_ALIGN_TOP_LEFT, 30, 260);
+    lv_obj_t *clock_label = lv_label_create(clock_btn);
+    lv_label_set_text(clock_label, "时钟");
+    lv_obj_set_style_text_font(clock_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(clock_label);
+    lv_obj_add_event_cb(clock_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
+
+    // 创建2048游戏按钮（第三行，中间）
+    lv_obj_t *game2048_btn = lv_btn_create(main_screen);
+    lv_obj_set_size(game2048_btn, 150, 80);
+    lv_obj_align(game2048_btn, LV_ALIGN_TOP_MID, 0, 260);
+    lv_obj_t *game2048_label = lv_label_create(game2048_btn);
+    lv_label_set_text(game2048_label, "2048");
+    lv_obj_set_style_text_font(game2048_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(game2048_label);
+    lv_obj_add_event_cb(game2048_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
+    
+    // 创建退出按钮（第四行，居中，红色）
     lv_obj_t *exit_btn = lv_btn_create(main_screen);
     lv_obj_set_size(exit_btn, 150, 80);
-    lv_obj_align(exit_btn, LV_ALIGN_TOP_MID, 0, 260);
+    lv_obj_align(exit_btn, LV_ALIGN_TOP_MID, 0, 360);
+    lv_obj_set_style_bg_color(exit_btn, lv_color_hex(0xF44336), 0);
+    lv_obj_set_style_border_color(exit_btn, lv_color_hex(0xd32f2f), 0);
     lv_obj_t *exit_label = lv_label_create(exit_btn);
     lv_label_set_text(exit_label, "退出");
     lv_obj_set_style_text_font(exit_label, &SourceHanSansSC_VF, 0);
+    lv_obj_set_style_text_color(exit_label, lv_color_hex(0xffffff), 0);
     lv_obj_center(exit_label);
     lv_obj_add_event_cb(exit_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
 }
@@ -157,10 +181,40 @@ void create_player_screen(void) {
     player_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(player_screen, lv_color_hex(0xf0f0f0), 0);
     
+    // 播放列表标题（固定在左上方）
+    lv_obj_t *playlist_title = lv_label_create(player_screen);
+    lv_label_set_text(playlist_title, "播放列表");
+    lv_obj_set_style_text_font(playlist_title, &SourceHanSansSC_VF, 0);
+    lv_obj_set_style_text_color(playlist_title, lv_color_hex(0x1a1a1a), 0);
+    lv_obj_align(playlist_title, LV_ALIGN_TOP_LEFT, 10, 10);  // 固定在左上方
+    lv_obj_move_foreground(playlist_title);  // 确保标题在最上层
+    
+    /* 创建播放列表容器（左侧，标题下方间隔60px） */
+    extern lv_obj_t *playlist_container;
+    playlist_container = lv_obj_create(player_screen);
+    lv_obj_set_size(playlist_container, 250, 250);  // 调整高度以适应新布局
+    lv_obj_align(playlist_container, LV_ALIGN_TOP_LEFT, 10, 70);  // 10 + 60 = 70，标题下方60px
+    lv_obj_set_style_bg_color(playlist_container, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_border_width(playlist_container, 2, 0);
+    lv_obj_set_style_border_color(playlist_container, lv_color_hex(0xcccccc), 0);
+    lv_obj_set_style_pad_all(playlist_container, 0, 0);
+    
+    // 创建滚动列表容器（可滚动）
+    extern lv_obj_t *playlist_list;
+    playlist_list = lv_obj_create(playlist_container);
+    lv_obj_set_size(playlist_list, LV_PCT(100), LV_PCT(100));  // 填满容器
+    lv_obj_align(playlist_list, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_opa(playlist_list, LV_OPA_0, 0);
+    lv_obj_set_style_border_width(playlist_list, 0, 0);
+    lv_obj_set_flex_flow(playlist_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(playlist_list, 5, 0);
+    lv_obj_set_scroll_dir(playlist_list, LV_DIR_VER);  // 启用垂直滚动
+    lv_obj_set_scrollbar_mode(playlist_list, LV_SCROLLBAR_MODE_AUTO);  // 自动显示滚动条
+    
     /* 创建视频容器（使用mmap内存映射，减少容器面积） */
     video_container = lv_obj_create(player_screen);
-    lv_obj_set_size(video_container, 640, 360);  // 减小尺寸，使用mmap提高性能
-    lv_obj_align(video_container, LV_ALIGN_TOP_MID, 0, 50);  // 向下移动，预留顶部空间
+    lv_obj_set_size(video_container, 520, 280);  // 调整尺寸以适应新布局
+    lv_obj_align(video_container, LV_ALIGN_TOP_RIGHT, -10, 50);  // 右侧对齐
     lv_obj_set_style_border_width(video_container, 0, 0);
     lv_obj_set_style_bg_color(video_container, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(video_container, LV_OPA_TRANSP, 0);
@@ -188,101 +242,64 @@ void create_player_screen(void) {
     lv_obj_center(video_hint);
     
     
-    /* 添加多媒体控制区域 */
-    lv_obj_t *media_panel = lv_obj_create(player_screen);
-    lv_obj_set_size(media_panel, 800, 80);
-    lv_obj_align(media_panel, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(media_panel, lv_color_hex(0xe0e0e0), 0);
-    lv_obj_set_style_border_width(media_panel, 0, 0);
-    lv_obj_set_style_radius(media_panel, 15, 0);
-    lv_obj_set_style_pad_all(media_panel, 10, 0);
+    // 创建返回按钮（右上角，与其他返回按钮大小一致）
+    lv_obj_t *player_back_btn = lv_btn_create(player_screen);
+    lv_obj_set_size(player_back_btn, 80, 40);
+    lv_obj_align(player_back_btn, LV_ALIGN_TOP_RIGHT, -10, 10);
+    lv_obj_set_style_bg_color(player_back_btn, lv_color_hex(0x9E9E9E), 0);
+    lv_obj_move_foreground(player_back_btn);  // 确保在最上层
+    lv_obj_t *player_back_label = lv_label_create(player_back_btn);
+    lv_label_set_text(player_back_label, "返回");
+    lv_obj_set_style_text_font(player_back_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(player_back_label);
+    lv_obj_add_event_cb(player_back_btn, back_to_main_cb, LV_EVENT_CLICKED, NULL);
     
-    /* 创建控制按钮容器 */
+    /* 添加多媒体控制区域（高度增加到200px，禁用滚动） */
+    lv_obj_t *media_panel = lv_obj_create(player_screen);
+    lv_obj_set_size(media_panel, 520, 200);  // 高度增加到200px
+    lv_obj_align(media_panel, LV_ALIGN_BOTTOM_RIGHT, -10, 0);  // 右侧对齐
+    lv_obj_set_style_bg_color(media_panel, lv_color_hex(0xf5f5f5), 0);
+    lv_obj_set_style_border_width(media_panel, 1, 0);
+    lv_obj_set_style_border_color(media_panel, lv_color_hex(0xcccccc), 0);
+    lv_obj_set_style_radius(media_panel, 10, 0);
+    lv_obj_set_style_pad_all(media_panel, 12, 0);
+    lv_obj_clear_flag(media_panel, LV_OBJ_FLAG_SCROLLABLE);  // 禁用滚动
+    
+    /* 创建控制按钮容器（两行布局，禁用滚动） */
     lv_obj_t *btn_container = lv_obj_create(media_panel);
-    lv_obj_set_size(btn_container, 780, 60);
+    lv_obj_set_size(btn_container, LV_PCT(100), LV_PCT(100));
     lv_obj_align(btn_container, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_flex_flow(btn_container, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(btn_container, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(btn_container, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_border_width(btn_container, 0, 0);
     lv_obj_set_style_bg_opa(btn_container, LV_OPA_0, 0);
-    lv_obj_set_style_pad_gap(btn_container, 6, 0);
+    lv_obj_set_style_pad_gap(btn_container, 15, 0);  // 增加行间距以适应200px高度
+    lv_obj_clear_flag(btn_container, LV_OBJ_FLAG_SCROLLABLE);  // 禁用滚动
     
-    // 返回按钮
-    lv_obj_t *back_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(back_btn, 60, 45);
-    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x9E9E9E), 0);
-    lv_obj_t *back_label = lv_label_create(back_btn);
-    lv_label_set_text(back_label, "返回");
-    lv_obj_set_style_text_font(back_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(back_label);
-    lv_obj_add_event_cb(back_btn, back_to_main_cb, LV_EVENT_CLICKED, NULL);
+    /* 第一行：主要控制按钮 */
+    lv_obj_t *btn_row1 = lv_obj_create(btn_container);
+    lv_obj_set_size(btn_row1, LV_PCT(100), 80);  // 增加行高以适应200px高度
+    lv_obj_set_flex_flow(btn_row1, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btn_row1, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_border_width(btn_row1, 0, 0);
+    lv_obj_set_style_bg_opa(btn_row1, LV_OPA_0, 0);
+    lv_obj_set_style_pad_gap(btn_row1, 15, 0);  // 增加按钮间距
+    lv_obj_clear_flag(btn_row1, LV_OBJ_FLAG_SCROLLABLE);  // 禁用滚动
     
-    // 音量减按钮
-    extern void volume_down_cb(lv_event_t * e);
-    lv_obj_t *vol_down_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(vol_down_btn, 70, 50);
-    lv_obj_t *vol_down_label = lv_label_create(vol_down_btn);
-    lv_label_set_text(vol_down_label, "音量-");
-    lv_obj_set_style_text_font(vol_down_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(vol_down_label);
-    lv_obj_add_event_cb(vol_down_btn, volume_down_cb, LV_EVENT_CLICKED, NULL);
+    /* 第二行：辅助控制按钮 */
+    lv_obj_t *btn_row2 = lv_obj_create(btn_container);
+    lv_obj_set_size(btn_row2, LV_PCT(100), 80);  // 增加行高以适应200px高度
+    lv_obj_set_flex_flow(btn_row2, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btn_row2, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_border_width(btn_row2, 0, 0);
+    lv_obj_set_style_bg_opa(btn_row2, LV_OPA_0, 0);
+    lv_obj_set_style_pad_gap(btn_row2, 15, 0);  // 增加按钮间距
+    lv_obj_clear_flag(btn_row2, LV_OBJ_FLAG_SCROLLABLE);  // 禁用滚动
     
-    // 音量加按钮
-    extern void volume_up_cb(lv_event_t * e);
-    lv_obj_t *vol_up_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(vol_up_btn, 70, 50);
-    lv_obj_t *vol_up_label = lv_label_create(vol_up_btn);
-    lv_label_set_text(vol_up_label, "音量+");
-    lv_obj_set_style_text_font(vol_up_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(vol_up_label);
-    lv_obj_add_event_cb(vol_up_btn, volume_up_cb, LV_EVENT_CLICKED, NULL);
-    
-    // 减速按钮
-    extern void slower_cb(lv_event_t * e);
-    lv_obj_t *slower_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(slower_btn, 70, 50);
-    lv_obj_t *slower_label = lv_label_create(slower_btn);
-    lv_label_set_text(slower_label, "速度-");
-    lv_obj_set_style_text_font(slower_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(slower_label);
-    lv_obj_add_event_cb(slower_btn, slower_cb, LV_EVENT_CLICKED, NULL);
-    
-    // 加速按钮
-    extern void faster_cb(lv_event_t * e);
-    lv_obj_t *faster_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(faster_btn, 70, 50);
-    lv_obj_t *faster_label = lv_label_create(faster_btn);
-    lv_label_set_text(faster_label, "速度+");
-    lv_obj_set_style_text_font(faster_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(faster_label);
-    lv_obj_add_event_cb(faster_btn, faster_cb, LV_EVENT_CLICKED, NULL);
-    
-    // 播放按钮
-    extern void play_audio_cb(lv_event_t * e);
-    lv_obj_t *play_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(play_btn, 80, 50);
-    lv_obj_set_style_bg_color(play_btn, lv_color_hex(0x4CAF50), 0);
-    lv_obj_t *play_label = lv_label_create(play_btn);
-    lv_label_set_text(play_label, "播放");
-    lv_obj_set_style_text_font(play_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(play_label);
-    lv_obj_add_event_cb(play_btn, play_audio_cb, LV_EVENT_CLICKED, NULL);
-    
-    // 停止按钮
-    extern void stop_cb(lv_event_t * e);
-    lv_obj_t *stop_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(stop_btn, 70, 50);
-    lv_obj_set_style_bg_color(stop_btn, lv_color_hex(0xF44336), 0);
-    lv_obj_t *stop_label = lv_label_create(stop_btn);
-    lv_label_set_text(stop_label, "停止");
-    lv_obj_set_style_text_font(stop_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(stop_label);
-    lv_obj_add_event_cb(stop_btn, stop_cb, LV_EVENT_CLICKED, NULL);
-    
-    // 上一首按钮
+    // 第一行：播放控制（上一首、播放、停止、下一首）
     extern void prev_media_cb(lv_event_t * e);
-    lv_obj_t *prev_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(prev_btn, 70, 50);
+    lv_obj_t *prev_btn = lv_btn_create(btn_row1);
+    lv_obj_set_size(prev_btn, 100, 60);  // 增加按钮高度以适应更大的行高
     lv_obj_set_style_bg_color(prev_btn, lv_color_hex(0x2196F3), 0);
     lv_obj_t *prev_label = lv_label_create(prev_btn);
     lv_label_set_text(prev_label, "上一首");
@@ -290,10 +307,29 @@ void create_player_screen(void) {
     lv_obj_center(prev_label);
     lv_obj_add_event_cb(prev_btn, prev_media_cb, LV_EVENT_CLICKED, NULL);
     
-    // 下一首按钮
+    extern void play_audio_cb(lv_event_t * e);
+    lv_obj_t *play_btn = lv_btn_create(btn_row1);
+    lv_obj_set_size(play_btn, 110, 60);  // 增加按钮高度
+    lv_obj_set_style_bg_color(play_btn, lv_color_hex(0x4CAF50), 0);
+    lv_obj_t *play_label = lv_label_create(play_btn);
+    lv_label_set_text(play_label, "播放");
+    lv_obj_set_style_text_font(play_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(play_label);
+    lv_obj_add_event_cb(play_btn, play_audio_cb, LV_EVENT_CLICKED, NULL);
+    
+    extern void stop_cb(lv_event_t * e);
+    lv_obj_t *stop_btn = lv_btn_create(btn_row1);
+    lv_obj_set_size(stop_btn, 100, 60);  // 增加按钮高度
+    lv_obj_set_style_bg_color(stop_btn, lv_color_hex(0xF44336), 0);
+    lv_obj_t *stop_label = lv_label_create(stop_btn);
+    lv_label_set_text(stop_label, "停止");
+    lv_obj_set_style_text_font(stop_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(stop_label);
+    lv_obj_add_event_cb(stop_btn, stop_cb, LV_EVENT_CLICKED, NULL);
+    
     extern void next_media_cb(lv_event_t * e);
-    lv_obj_t *next_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(next_btn, 70, 50);
+    lv_obj_t *next_btn = lv_btn_create(btn_row1);
+    lv_obj_set_size(next_btn, 100, 60);  // 增加按钮高度
     lv_obj_set_style_bg_color(next_btn, lv_color_hex(0x2196F3), 0);
     lv_obj_t *next_label = lv_label_create(next_btn);
     lv_label_set_text(next_label, "下一首");
@@ -301,14 +337,52 @@ void create_player_screen(void) {
     lv_obj_center(next_label);
     lv_obj_add_event_cb(next_btn, next_media_cb, LV_EVENT_CLICKED, NULL);
     
+    // 第二行：音量、速度控制（移除返回按钮，已移到右上角）
+    extern void volume_down_cb(lv_event_t * e);
+    lv_obj_t *vol_down_btn = lv_btn_create(btn_row2);
+    lv_obj_set_size(vol_down_btn, 110, 60);  // 增加按钮高度
+    lv_obj_t *vol_down_label = lv_label_create(vol_down_btn);
+    lv_label_set_text(vol_down_label, "音量-");
+    lv_obj_set_style_text_font(vol_down_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(vol_down_label);
+    lv_obj_add_event_cb(vol_down_btn, volume_down_cb, LV_EVENT_CLICKED, NULL);
+    
+    extern void volume_up_cb(lv_event_t * e);
+    lv_obj_t *vol_up_btn = lv_btn_create(btn_row2);
+    lv_obj_set_size(vol_up_btn, 110, 60);  // 增加按钮高度
+    lv_obj_t *vol_up_label = lv_label_create(vol_up_btn);
+    lv_label_set_text(vol_up_label, "音量+");
+    lv_obj_set_style_text_font(vol_up_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(vol_up_label);
+    lv_obj_add_event_cb(vol_up_btn, volume_up_cb, LV_EVENT_CLICKED, NULL);
+    
+    extern void slower_cb(lv_event_t * e);
+    lv_obj_t *slower_btn = lv_btn_create(btn_row2);
+    lv_obj_set_size(slower_btn, 110, 60);  // 增加按钮高度
+    lv_obj_t *slower_label = lv_label_create(slower_btn);
+    lv_label_set_text(slower_label, "速度-");
+    lv_obj_set_style_text_font(slower_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(slower_label);
+    lv_obj_add_event_cb(slower_btn, slower_cb, LV_EVENT_CLICKED, NULL);
+    
+    extern void faster_cb(lv_event_t * e);
+    lv_obj_t *faster_btn = lv_btn_create(btn_row2);
+    lv_obj_set_size(faster_btn, 110, 60);  // 增加按钮高度
+    lv_obj_t *faster_label = lv_label_create(faster_btn);
+    lv_label_set_text(faster_label, "速度+");
+    lv_obj_set_style_text_font(faster_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(faster_label);
+    lv_obj_add_event_cb(faster_btn, faster_cb, LV_EVENT_CLICKED, NULL);
+    
     /* 创建状态显示区域（在控制按钮上方） */
     lv_obj_t *status_container = lv_obj_create(player_screen);
-    lv_obj_set_size(status_container, 750, 30);
-    lv_obj_align(status_container, LV_ALIGN_BOTTOM_MID, 0, -90);
+    lv_obj_set_size(status_container, 520, 25);
+    lv_obj_align(status_container, LV_ALIGN_BOTTOM_RIGHT, -10, -205);  // 适配200px高度的控制面板
     lv_obj_set_flex_flow(status_container, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(status_container, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_border_width(status_container, 0, 0);
     lv_obj_set_style_bg_opa(status_container, LV_OPA_0, 0);
+    lv_obj_clear_flag(status_container, LV_OBJ_FLAG_SCROLLABLE);  // 取消滑动列表格式，固定格式
     
     // 状态标签
     status_label = lv_label_create(status_container);
@@ -321,6 +395,130 @@ void create_player_screen(void) {
     lv_label_set_text(speed_label, "速度: 1.00x");
     lv_obj_set_style_text_font(speed_label, &SourceHanSansSC_VF, 0);
     lv_obj_set_style_text_color(speed_label, lv_color_hex(0x1a1a1a), 0);
+    
+    // 初始化播放列表（在音乐播放时更新）
+    update_playlist();
+    
+    // 初始化状态回调
+    init_player_screen_callbacks();
+}
+
+/**
+ * @brief 音频播放器状态更新回调函数
+ */
+static void audio_status_update_callback(const char *status) {
+    extern lv_obj_t *status_label;
+    if (status_label) {
+        lv_label_set_text(status_label, status);
+    }
+}
+
+/**
+ * @brief 初始化播放器屏幕的状态回调
+ */
+void init_player_screen_callbacks(void) {
+    // 设置音频播放器状态更新回调
+    extern void audio_player_set_status_callback(void (*callback)(const char *));
+    audio_player_set_status_callback(audio_status_update_callback);
+}
+
+/**
+ * @brief 播放列表项点击事件处理
+ */
+static void playlist_item_clicked(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
+        return;
+    }
+    
+    lv_obj_t *btn = lv_event_get_target(e);
+    int *index = (int *)lv_obj_get_user_data(btn);
+    if (index) {
+        extern void play_audio_by_index(int);
+        play_audio_by_index(*index);
+    }
+}
+
+/**
+ * @brief 更新播放列表显示
+ */
+void update_playlist(void) {
+    extern char **audio_files;
+    extern int audio_count;
+    extern int current_audio_index;
+    
+    if (!playlist_list) {
+        return;
+    }
+    
+    // 清空现有列表项
+    lv_obj_clean(playlist_list);
+    
+    // 添加音频文件到列表
+    for (int i = 0; i < audio_count && i < 20; i++) {  // 最多显示20项
+        if (!audio_files[i]) {
+            break;
+        }
+        
+        // 获取文件名（不含路径）
+        const char *filename = strrchr(audio_files[i], '/');
+        filename = filename ? filename + 1 : audio_files[i];
+        
+        // 创建列表项按钮
+        lv_obj_t *list_btn = lv_btn_create(playlist_list);
+        lv_obj_set_size(list_btn, LV_PCT(100), 35);
+        lv_obj_set_style_bg_color(list_btn, 
+            (i == current_audio_index) ? lv_color_hex(0x4CAF50) : lv_color_hex(0xffffff), 0);
+        lv_obj_set_style_border_width(list_btn, 1, 0);
+        lv_obj_set_style_border_color(list_btn, lv_color_hex(0xcccccc), 0);
+        lv_obj_set_style_pad_all(list_btn, 5, 0);
+        
+        // 创建标签
+        lv_obj_t *list_label = lv_label_create(list_btn);
+        lv_label_set_text(list_label, filename);
+        lv_obj_set_style_text_font(list_label, &SourceHanSansSC_VF, 0);
+        lv_obj_set_style_text_color(list_label, 
+            (i == current_audio_index) ? lv_color_hex(0xffffff) : lv_color_hex(0x1a1a1a), 0);
+        lv_obj_align(list_label, LV_ALIGN_LEFT_MID, 5, 0);
+        lv_label_set_long_mode(list_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+        lv_obj_set_width(list_label, LV_PCT(90));
+        
+        // 存储索引到用户数据
+        int *index_ptr = (int *)malloc(sizeof(int));
+        *index_ptr = i;
+        lv_obj_set_user_data(list_btn, index_ptr);
+        
+        // 添加点击事件
+        lv_obj_add_event_cb(list_btn, playlist_item_clicked, LV_EVENT_CLICKED, NULL);
+    }
+}
+
+/**
+ * @brief 通过索引播放音频
+ */
+void play_audio_by_index(int index) {
+    extern char **audio_files;
+    extern int audio_count;
+    extern int current_audio_index;
+    extern bool audio_player_is_playing(void);
+    extern void audio_player_stop(void);
+    extern bool audio_player_play(const char *);
+    
+    if (index < 0 || index >= audio_count || !audio_files[index]) {
+        return;
+    }
+    
+    // 停止当前播放
+    if (audio_player_is_playing()) {
+        audio_player_stop();
+        usleep(100000);
+    }
+    
+    // 更新索引并播放
+    current_audio_index = index;
+    audio_player_play(audio_files[index]);
+    
+    // 更新播放列表显示
+    update_playlist();
 }
 
 /**
@@ -485,6 +683,12 @@ void main_window_event_handler(lv_event_t *e) {
         show_weather_window();
     } else if(strcmp(text, "计时器") == 0) {
         timer_win_show();
+    } else if(strcmp(text, "时钟") == 0) {
+        extern void clock_win_show(void);
+        clock_win_show();
+    } else if(strcmp(text, "2048") == 0) {
+        extern void game_2048_win_show(void);
+        game_2048_win_show();
     } else if(strcmp(text, "退出") == 0) {
         exit_application();
     }
