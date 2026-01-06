@@ -6,6 +6,7 @@
 #include "login_win.h"
 #include "ui_screens.h"
 #include "exit_win.h"
+#include "../image_viewer/image_viewer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,12 +17,19 @@
 #include "lvgl/lvgl.h"
 #include "lvgl/src/font/lv_font.h"
 #include "lvgl/src/font/lv_symbol_def.h"
+#include "lvgl/src/widgets/lv_canvas.h"
 
 /* 声明FontAwesome字体 */
 extern const lv_font_t fa_solid_24;
 
 /* 自定义符号定义 */
 #define CUSTOM_SYMBOL_VOLUME_MAX "\xEF\x80\xA8"  // FontAwesome volume-max icon (U+F028) - 圆形喇叭
+
+/* 背景图路径（与屏保共用） */
+#define SCREENSAVER_BG_IMAGE "/mdata/11.BMP"
+
+/* 背景图路径（与屏保共用） */
+#define SCREENSAVER_BG_IMAGE "/mdata/11.BMP"
 
 /* 声明SourceHanSansSC_VF字体 */
 #if LV_FONT_SOURCE_HAN_SANS_SC_VF
@@ -53,6 +61,8 @@ static int buzzer_fd = -1;  // 蜂鸣器文件描述符
 static int led_fd = -1;  // LED文件描述符
 static bool buzzer_enabled = true;  // 蜂鸣器开关状态，默认开启
 static lv_obj_t *buzzer_btn = NULL;  // 蜂鸣器控制按钮
+static lv_obj_t *bg_canvas = NULL;  // 背景图canvas
+static bool need_show_main_screen = false;  // 标志位：需要在主循环中显示主屏幕
 
 /* 正确密码 */
 #define CORRECT_PASSWORD "114514"
@@ -241,6 +251,13 @@ static void update_password_display(void) {
 }
 
 /**
+ * @brief 动画回调函数（避免类型转换警告）
+ */
+static void anim_set_y_cb(void *var, int32_t v) {
+    lv_obj_set_y((lv_obj_t *)var, (lv_coord_t)v);
+}
+
+/**
  * @brief 数字键盘按钮点击事件处理
  */
 static void keypad_btn_event_handler(lv_event_t *e) {
@@ -286,15 +303,9 @@ static void keypad_btn_event_handler(lv_event_t *e) {
                 lv_obj_add_flag(login_screen, LV_OBJ_FLAG_HIDDEN);
             }
             
-            // 切换到主屏幕
-            extern lv_obj_t *main_screen;
-            if (main_screen) {
-                lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
-                lv_scr_load(main_screen);
-                
-                // 强制刷新
-                lv_refr_now(NULL);
-            }
+            // 设置标志位，在主循环中切换到主屏幕（避免在事件处理中阻塞）
+            need_show_main_screen = true;
+            printf("[密码锁] 密码验证成功，准备切换到主屏幕\n");
         } else {
             // 登录失败：LED闪烁5次（高频闪烁）
             led_blink(5, 100);  // 5次，每次100ms（高频）
@@ -387,8 +398,27 @@ void login_win_show(void) {
     // 创建登录屏幕
     if (login_screen == NULL) {
         login_screen = lv_obj_create(NULL);
-        lv_obj_set_style_bg_color(login_screen, lv_color_hex(0xf0f0f0), 0);
+        lv_obj_set_style_bg_opa(login_screen, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_opa(login_screen, LV_OPA_TRANSP, 0);
         lv_obj_set_size(login_screen, LV_HOR_RES, LV_VER_RES);
+        
+        // 创建背景图canvas（全屏）
+        // 使用固定大小避免编译错误（800x480，32位色深）
+        #define BG_CANVAS_WIDTH 800
+        #define BG_CANVAS_HEIGHT 480
+        static lv_color_t bg_buf[LV_CANVAS_BUF_SIZE_TRUE_COLOR(BG_CANVAS_WIDTH, BG_CANVAS_HEIGHT)];
+        bg_canvas = lv_canvas_create(login_screen);
+        lv_canvas_set_buffer(bg_canvas, bg_buf, BG_CANVAS_WIDTH, BG_CANVAS_HEIGHT, LV_IMG_CF_TRUE_COLOR);
+        lv_obj_align(bg_canvas, LV_ALIGN_TOP_LEFT, 0, 0);
+        lv_obj_move_background(bg_canvas);  // 移到最底层
+        
+        // 加载背景图
+        if (load_bmp_to_canvas(bg_canvas, SCREENSAVER_BG_IMAGE) != 0) {
+            printf("[密码锁] 背景图加载失败，使用灰色背景\n");
+            lv_canvas_fill_bg(bg_canvas, lv_color_hex(0xf0f0f0), LV_OPA_COVER);
+        } else {
+            printf("[密码锁] 背景图加载成功\n");
+        }
         
         // 创建密码显示栏（正上方居中，往上移）
         password_display = lv_label_create(login_screen);
@@ -538,8 +568,16 @@ void login_win_show(void) {
     // 切换到登录屏幕
     lv_scr_load(login_screen);
     
+    // 处理几次定时器，确保LVGL完成渲染
+    for (int i = 0; i < 5; i++) {
+        lv_timer_handler();
+        usleep(10000);  // 10ms
+    }
+    
     // 强制刷新
     lv_refr_now(NULL);
+    
+    printf("[密码锁] 密码锁窗口显示完成\n");
 }
 
 /**
@@ -547,5 +585,59 @@ void login_win_show(void) {
  */
 bool login_win_is_logged_in(void) {
     return is_logged_in;
+}
+
+/**
+ * @brief 检查并处理主屏幕显示（在主循环中调用）
+ */
+void login_win_check_show_main(void) {
+    if (!need_show_main_screen) {
+        return;
+    }
+    
+    need_show_main_screen = false;
+    
+    extern lv_obj_t *main_screen;
+    if (!main_screen) {
+        printf("[密码锁] 错误：主屏幕未初始化\n");
+        return;
+    }
+    
+    printf("[密码锁] 开始切换到主屏幕\n");
+    
+    // 隐藏登录屏幕
+    if (login_screen) {
+        lv_obj_add_flag(login_screen, LV_OBJ_FLAG_HIDDEN);
+    }
+    
+    // 切换到主屏幕（使用滑动动画）
+    lv_obj_set_y(login_screen, 0);
+    lv_obj_set_y(main_screen, 480);  // 使用固定值
+    lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
+    lv_scr_load(main_screen);
+    
+    // 创建动画：密码锁向上滑出，主页从下往上滑入
+    lv_anim_t anim1, anim2;
+    
+    // 密码锁向上滑出
+    lv_anim_init(&anim1);
+    lv_anim_set_var(&anim1, login_screen);
+    lv_anim_set_values(&anim1, 0, -480);
+    lv_anim_set_time(&anim1, 300);
+    lv_anim_set_exec_cb(&anim1, anim_set_y_cb);
+    lv_anim_start(&anim1);
+    
+    // 主页从下往上滑入
+    lv_anim_init(&anim2);
+    lv_anim_set_var(&anim2, main_screen);
+    lv_anim_set_values(&anim2, 480, 0);
+    lv_anim_set_time(&anim2, 300);
+    lv_anim_set_exec_cb(&anim2, anim_set_y_cb);
+    lv_anim_start(&anim2);
+    
+    // 强制刷新
+    lv_refr_now(NULL);
+    
+    printf("[密码锁] 主屏幕切换完成\n");
 }
 

@@ -2,6 +2,7 @@
 #include "src/hal/hal.h"
 #include "src/ui/ui_screens.h"
 #include "src/ui/login_win.h"
+#include "src/ui/screensaver_win.h"
 #include "src/common/common.h"
 #include "src/common/touch_device.h"
 #include "src/file_scanner/file_scanner.h"
@@ -58,12 +59,20 @@ int main(void)
     create_image_screen();
     create_player_screen();
 
-    /* 先显示登录界面（在主页之前） */
-    login_win_show();
+    /* 先显示屏保（在密码锁之前） */
+    screensaver_win_show();
 
     /* 主循环：处理LVGL任务 */
     while(!should_exit) {
         lv_timer_handler();
+        
+        // 检查屏保是否解锁
+        extern void screensaver_win_check_unlock(void);
+        screensaver_win_check_unlock();
+        
+        // 检查密码锁是否需要切换到主屏幕
+        extern void login_win_check_show_main(void);
+        login_win_check_show_main();
         
         // 检查是否需要返回主页（从视频播放退出）
         extern bool need_return_to_main;

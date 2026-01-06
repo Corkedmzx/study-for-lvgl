@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <unistd.h>
 #include "lvgl/lvgl.h"
 #include "lvgl/src/font/lv_font.h"
 

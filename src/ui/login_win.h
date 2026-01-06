@@ -19,5 +19,10 @@ void login_win_show(void);
  */
 bool login_win_is_logged_in(void);
 
+/**
+ * @brief 检查并处理主屏幕显示（在主循环中调用）
+ */
+void login_win_check_show_main(void);
+
 #endif /* LOGIN_WIN_H */
 
