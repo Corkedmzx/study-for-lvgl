@@ -26,10 +26,7 @@ extern const lv_font_t fa_solid_24;
 #define CUSTOM_SYMBOL_VOLUME_MAX "\xEF\x80\xA8"  // FontAwesome volume-max icon (U+F028) - 圆形喇叭
 
 /* 背景图路径（与屏保共用） */
-#define SCREENSAVER_BG_IMAGE "/mdata/11.BMP"
-
-/* 背景图路径（与屏保共用） */
-#define SCREENSAVER_BG_IMAGE "/mdata/11.BMP"
+#define SCREENSAVER_BG_IMAGE "/mdata/open.BMP"
 
 /* 声明SourceHanSansSC_VF字体 */
 #if LV_FONT_SOURCE_HAN_SANS_SC_VF

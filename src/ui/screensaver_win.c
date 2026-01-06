@@ -25,13 +25,13 @@ extern const lv_font_t SourceHanSansSC_VF;
 #endif
 
 /* 背景图路径 */
-#define SCREENSAVER_BG_IMAGE "/mdata/11.BMP"
+#define SCREENSAVER_BG_IMAGE "/mdata/open.BMP"
 
 /* 钟表参数 */
-#define CLOCK_SIZE 150
+#define CLOCK_SIZE 220  // 从150增加到220，使钟表更大
 #define CLOCK_CENTER_X (CLOCK_SIZE / 2)
 #define CLOCK_CENTER_Y (CLOCK_SIZE / 2)
-#define CLOCK_RADIUS 65
+#define CLOCK_RADIUS 95  // 从65增加到95，使钟表更大
 
 /* 滑动检测参数 */
 #define SWIPE_THRESHOLD 100  // 最小滑动距离（像素）
@@ -74,69 +74,69 @@ static void draw_clock_face(void) {
     // 清空画布（透明背景）
     lv_canvas_fill_bg(clock_canvas, lv_color_hex(0x000000), LV_OPA_TRANSP);
     
-    // 绘制外圆（白色）
+    // 绘制外圆（白色，加粗）
     lv_draw_arc_dsc_t arc_dsc;
     lv_draw_arc_dsc_init(&arc_dsc);
     arc_dsc.color = lv_color_hex(0xFFFFFF);
-    arc_dsc.width = 3;
+    arc_dsc.width = 5;  // 从3增加到5，使外圆更粗
     lv_canvas_draw_arc(clock_canvas, CLOCK_CENTER_X, CLOCK_CENTER_Y, CLOCK_RADIUS, 0, 360, &arc_dsc);
     
-    // 绘制刻度（12个主要刻度）
+    // 绘制刻度（12个主要刻度，加粗加长）
     for (int i = 0; i < 12; i++) {
         double angle = (i * 30 - 90) * M_PI / 180.0;
-        int x1 = CLOCK_CENTER_X + (int)((CLOCK_RADIUS - 10) * cos(angle));
-        int y1 = CLOCK_CENTER_Y + (int)((CLOCK_RADIUS - 10) * sin(angle));
+        int x1 = CLOCK_CENTER_X + (int)((CLOCK_RADIUS - 15) * cos(angle));  // 从10增加到15，使刻度更长
+        int y1 = CLOCK_CENTER_Y + (int)((CLOCK_RADIUS - 15) * sin(angle));
         int x2 = CLOCK_CENTER_X + (int)(CLOCK_RADIUS * cos(angle));
         int y2 = CLOCK_CENTER_Y + (int)(CLOCK_RADIUS * sin(angle));
         
         lv_draw_line_dsc_t line_dsc;
         lv_draw_line_dsc_init(&line_dsc);
         line_dsc.color = lv_color_hex(0xFFFFFF);
-        line_dsc.width = 2;
+        line_dsc.width = 4;  // 从2增加到4，使刻度更粗
         lv_point_t points[2] = {{x1, y1}, {x2, y2}};
         lv_canvas_draw_line(clock_canvas, points, 2, &line_dsc);
     }
     
-    // 绘制时针
+    // 绘制时针（加粗）
     double hour_angle = (hour * 30 + minute * 0.5 - 90) * M_PI / 180.0;
     int hour_x = CLOCK_CENTER_X + (int)(CLOCK_RADIUS * 0.5 * cos(hour_angle));
     int hour_y = CLOCK_CENTER_Y + (int)(CLOCK_RADIUS * 0.5 * sin(hour_angle));
     lv_draw_line_dsc_t hour_line_dsc;
     lv_draw_line_dsc_init(&hour_line_dsc);
     hour_line_dsc.color = lv_color_hex(0xFFFFFF);
-    hour_line_dsc.width = 3;
+    hour_line_dsc.width = 6;  // 从3增加到6，使时针更粗
     lv_point_t hour_points[2] = {{CLOCK_CENTER_X, CLOCK_CENTER_Y}, {hour_x, hour_y}};
     lv_canvas_draw_line(clock_canvas, hour_points, 2, &hour_line_dsc);
     
-    // 绘制分针
+    // 绘制分针（加粗）
     double minute_angle = (minute * 6 - 90) * M_PI / 180.0;
     int minute_x = CLOCK_CENTER_X + (int)(CLOCK_RADIUS * 0.7 * cos(minute_angle));
     int minute_y = CLOCK_CENTER_Y + (int)(CLOCK_RADIUS * 0.7 * sin(minute_angle));
     lv_draw_line_dsc_t minute_line_dsc;
     lv_draw_line_dsc_init(&minute_line_dsc);
     minute_line_dsc.color = lv_color_hex(0xFFFFFF);
-    minute_line_dsc.width = 2;
+    minute_line_dsc.width = 4;  // 从2增加到4，使分针更粗
     lv_point_t minute_points[2] = {{CLOCK_CENTER_X, CLOCK_CENTER_Y}, {minute_x, minute_y}};
     lv_canvas_draw_line(clock_canvas, minute_points, 2, &minute_line_dsc);
     
-    // 绘制秒针
+    // 绘制秒针（加粗）
     double second_angle = (second * 6 - 90) * M_PI / 180.0;
     int second_x = CLOCK_CENTER_X + (int)(CLOCK_RADIUS * 0.85 * cos(second_angle));
     int second_y = CLOCK_CENTER_Y + (int)(CLOCK_RADIUS * 0.85 * sin(second_angle));
     lv_draw_line_dsc_t second_line_dsc;
     lv_draw_line_dsc_init(&second_line_dsc);
     second_line_dsc.color = lv_color_hex(0xFF0000);
-    second_line_dsc.width = 2;
+    second_line_dsc.width = 3;  // 从2增加到3，使秒针更粗
     lv_point_t second_points[2] = {{CLOCK_CENTER_X, CLOCK_CENTER_Y}, {second_x, second_y}};
     lv_canvas_draw_line(clock_canvas, second_points, 2, &second_line_dsc);
     
-    // 绘制中心点
+    // 绘制中心点（增大）
     lv_draw_rect_dsc_t center_dsc;
     lv_draw_rect_dsc_init(&center_dsc);
     center_dsc.bg_color = lv_color_hex(0xFFFFFF);
     center_dsc.bg_opa = LV_OPA_COVER;
     center_dsc.radius = LV_RADIUS_CIRCLE;
-    lv_canvas_draw_rect(clock_canvas, CLOCK_CENTER_X - 4, CLOCK_CENTER_Y - 4, 8, 8, &center_dsc);
+    lv_canvas_draw_rect(clock_canvas, CLOCK_CENTER_X - 6, CLOCK_CENTER_Y - 6, 12, 12, &center_dsc);  // 从8x8增加到12x12
 }
 
 /**
