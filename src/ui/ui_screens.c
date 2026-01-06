@@ -127,13 +127,33 @@ static lv_obj_t* create_icon_button(lv_obj_t *parent, const char *icon, const ch
 
 void create_main_screen(void) {
     main_screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(main_screen, lv_color_hex(0xf5f5f5), 0);
+    lv_obj_set_style_bg_opa(main_screen, LV_OPA_TRANSP, 0);  // 设置背景透明，让背景图显示
+    lv_obj_set_style_border_opa(main_screen, LV_OPA_TRANSP, 0);
+    
+    // 创建背景图canvas（全屏）
+    // 使用固定大小避免编译错误（800x480，32位色深）
+    #define MAIN_BG_CANVAS_WIDTH 800
+    #define MAIN_BG_CANVAS_HEIGHT 480
+    #define MAIN_BG_IMAGE "/mdata/index.bmp"
+    static lv_color_t main_bg_buf[LV_CANVAS_BUF_SIZE_TRUE_COLOR(MAIN_BG_CANVAS_WIDTH, MAIN_BG_CANVAS_HEIGHT)];
+    lv_obj_t *main_bg_canvas = lv_canvas_create(main_screen);
+    lv_canvas_set_buffer(main_bg_canvas, main_bg_buf, MAIN_BG_CANVAS_WIDTH, MAIN_BG_CANVAS_HEIGHT, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_align(main_bg_canvas, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_move_background(main_bg_canvas);  // 移到最底层
+    
+    // 加载背景图
+    if (load_bmp_to_canvas(main_bg_canvas, MAIN_BG_IMAGE) != 0) {
+        printf("[主页] 背景图加载失败，使用默认背景色\n");
+        lv_canvas_fill_bg(main_bg_canvas, lv_color_hex(0xf5f5f5), LV_OPA_COVER);
+    } else {
+        printf("[主页] 背景图加载成功: %s\n", MAIN_BG_IMAGE);
+    }
     
     /* 创建标题 */
     lv_obj_t *title = lv_label_create(main_screen);
     lv_label_set_text(title, "LVGL多媒体系统");
     lv_obj_set_style_text_font(title, &SourceHanSansSC_VF, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x1a1a1a), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
     
     /* 九宫格布局参数 */
