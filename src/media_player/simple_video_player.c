@@ -91,11 +91,11 @@ static bool start_mplayer(const char *file_path) {
         
         // 优先尝试mplayer，结合参考代码的简单方式和已验证可用的格式
         // 开发板信息：虚拟分辨率800x1440，色深32位，实际显示800x480
-        // 已验证：fbdev + bgra格式能正常播放视频
+        // 已验证：fbdev2 + bgra格式能正常播放视频
         // 方案：使用参考代码的参数顺序和简单方式，但使用fbdev + bgra格式（已验证可用）
         // 注意：保留-slave和FIFO用于触控功能，但退出时使用参考代码的简单方式
         execlp("mplayer", "mplayer",
-              "-vo", "fbdev2",        // 使用fbdev（已验证可用，参考video.c使用fbdev2但改为fbdev）
+              "-vo", "fbdev2",        // 使用fbdev2
               "-fs",
               "-zoom",
               "-quiet",
