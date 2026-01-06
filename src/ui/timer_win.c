@@ -18,6 +18,13 @@
 #include "lvgl/src/font/lv_font.h"
 #include "lvgl/src/widgets/lv_canvas.h"
 #include "lvgl/src/draw/lv_draw.h"
+#include "lvgl/src/font/lv_symbol_def.h"
+
+/* 声明FontAwesome字体 */
+extern const lv_font_t fa_solid_24;
+
+/* 自定义符号定义 */
+#define CUSTOM_SYMBOL_VOLUME_MAX "\xEF\x80\xA8"  // FontAwesome volume-max icon (U+F028) - 圆形喇叭
 
 /* 声明SourceHanSansSC_VF字体 */
 #if LV_FONT_SOURCE_HAN_SANS_SC_VF
@@ -53,12 +60,14 @@ static bool is_running = false;
 static int elapsed_seconds = 0;
 static pthread_t timer_thread = 0;
 static pthread_mutex_t timer_mutex = PTHREAD_MUTEX_INITIALIZER;
+static bool buzzer_enabled = true;  // 蜂鸣器开关状态，默认开启
+static lv_obj_t *buzzer_btn = NULL;  // 蜂鸣器控制按钮
 
 /**
  * @brief 触发蜂鸣器（短响）
  */
 static void beep_once(void) {
-    if (buzzer_fd >= 0) {
+    if (buzzer_enabled && buzzer_fd >= 0) {
         ioctl(buzzer_fd, BUZZ_ON);
         usleep(100000);  // 100ms
         ioctl(buzzer_fd, BUZZ_OFF);
@@ -316,7 +325,7 @@ static void *timer_thread_func(void *arg) {
             // LED闪烁
             led_flash_once();
             
-            // 蜂鸣器响
+            // 蜂鸣器响（如果启用）
             beep_once();
         }
         pthread_mutex_unlock(&timer_mutex);
@@ -421,6 +430,34 @@ static void reset_btn_event_handler(lv_event_t *e) {
 }
 
 /**
+ * @brief 蜂鸣器控制按钮事件处理
+ */
+static void buzzer_btn_event_handler(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
+        return;
+    }
+    
+    // 切换蜂鸣器开关状态
+    buzzer_enabled = !buzzer_enabled;
+    
+    // 更新按钮样式和图标
+    if (buzzer_btn) {
+        lv_obj_t *icon_label = lv_obj_get_child(buzzer_btn, 0);
+        if (icon_label) {
+            lv_label_set_text(icon_label, CUSTOM_SYMBOL_VOLUME_MAX);
+            // 根据开关状态设置颜色：开启=蓝色，关闭=灰色
+            if (buzzer_enabled) {
+                lv_obj_set_style_bg_color(buzzer_btn, lv_color_hex(0x2196F3), 0);
+                lv_obj_set_style_text_color(icon_label, lv_color_hex(0xFFFFFF), 0);
+            } else {
+                lv_obj_set_style_bg_color(buzzer_btn, lv_color_hex(0x9E9E9E), 0);
+                lv_obj_set_style_text_color(icon_label, lv_color_hex(0xFFFFFF), 0);
+            }
+        }
+    }
+}
+
+/**
  * @brief 返回按钮事件处理
  */
 static void back_btn_event_handler(lv_event_t *e) {
@@ -505,7 +542,7 @@ void timer_win_show(void) {
     lv_label_set_text(time_label, "00:00");
     lv_obj_set_style_text_font(time_label, &SourceHanSansSC_VF, 0);
     lv_obj_set_style_text_color(time_label, lv_color_hex(0x0066CC), 0);
-    lv_obj_align(time_label, LV_ALIGN_CENTER, 0, 80);
+    lv_obj_align(time_label, LV_ALIGN_CENTER, 0, 40);  // 向上移动，避免被按钮遮挡
     
     // 初始化钟表显示
     draw_timer_clock_face();
@@ -514,7 +551,7 @@ void timer_win_show(void) {
     start_btn = lv_btn_create(timer_window);
     lv_obj_set_size(start_btn, 120, 60);
     lv_obj_set_style_bg_color(start_btn, lv_color_hex(0x4CAF50), 0);
-    lv_obj_align(start_btn, LV_ALIGN_CENTER, -150, 80);
+    lv_obj_align(start_btn, LV_ALIGN_CENTER, -150, 120);  // 向下移动，给时间标签留出空间
     lv_obj_t *start_label = lv_label_create(start_btn);
     lv_label_set_text(start_label, "开始");
     lv_obj_set_style_text_font(start_label, &SourceHanSansSC_VF, 0);
@@ -525,7 +562,7 @@ void timer_win_show(void) {
     stop_btn = lv_btn_create(timer_window);
     lv_obj_set_size(stop_btn, 120, 60);
     lv_obj_set_style_bg_color(stop_btn, lv_color_hex(0xF44336), 0);
-    lv_obj_align(stop_btn, LV_ALIGN_CENTER, 0, 80);
+    lv_obj_align(stop_btn, LV_ALIGN_CENTER, 0, 120);  // 向下移动，给时间标签留出空间
     lv_obj_t *stop_label = lv_label_create(stop_btn);
     lv_label_set_text(stop_label, "停止");
     lv_obj_set_style_text_font(stop_label, &SourceHanSansSC_VF, 0);
@@ -537,12 +574,26 @@ void timer_win_show(void) {
     reset_btn = lv_btn_create(timer_window);
     lv_obj_set_size(reset_btn, 120, 60);
     lv_obj_set_style_bg_color(reset_btn, lv_color_hex(0xFF9800), 0);
-    lv_obj_align(reset_btn, LV_ALIGN_CENTER, 150, 80);
+    lv_obj_align(reset_btn, LV_ALIGN_CENTER, 150, 120);  // 向下移动，给时间标签留出空间
     lv_obj_t *reset_label = lv_label_create(reset_btn);
     lv_label_set_text(reset_label, "重置");
     lv_obj_set_style_text_font(reset_label, &SourceHanSansSC_VF, 0);
     lv_obj_center(reset_label);
     lv_obj_add_event_cb(reset_btn, reset_btn_event_handler, LV_EVENT_CLICKED, NULL);
+    
+    // 蜂鸣器控制按钮（圆形喇叭图标）
+    buzzer_btn = lv_btn_create(timer_window);
+    lv_obj_set_size(buzzer_btn, 60, 60);
+    lv_obj_set_style_bg_color(buzzer_btn, lv_color_hex(0x2196F3), 0);  // 蓝色（开启状态）
+    lv_obj_set_style_radius(buzzer_btn, LV_RADIUS_CIRCLE, 0);  // 圆形按钮
+    lv_obj_align(buzzer_btn, LV_ALIGN_TOP_LEFT, 20, 20);
+    lv_obj_move_foreground(buzzer_btn);
+    lv_obj_t *buzzer_icon = lv_label_create(buzzer_btn);
+    lv_label_set_text(buzzer_icon, CUSTOM_SYMBOL_VOLUME_MAX);
+    lv_obj_set_style_text_font(buzzer_icon, &fa_solid_24, 0);
+    lv_obj_set_style_text_color(buzzer_icon, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_center(buzzer_icon);
+    lv_obj_add_event_cb(buzzer_btn, buzzer_btn_event_handler, LV_EVENT_CLICKED, NULL);
     
     // 返回按钮
     lv_obj_t *back_btn = lv_btn_create(timer_window);

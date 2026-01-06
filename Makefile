@@ -23,6 +23,9 @@ CSRCS +=$(LVGL_DIR)/mouse_cursor_icon.c
 # Add SourceHanSansSC_VF font file (large font, requires LV_FONT_FMT_TXT_LARGE=1)
 CSRCS += bin/SourceHanSansSC_VF.c
 
+# Add FontAwesome solid font file (for icons)
+CSRCS += bin/FA-solid-900.c
+
 # Add src directory source files
 CSRCS += src/common/common.c
 CSRCS += src/common/touch_device.c

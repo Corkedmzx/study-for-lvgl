@@ -5,7 +5,9 @@
 
 #include "login_win.h"
 #include "ui_screens.h"
+#include "exit_win.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -13,6 +15,13 @@
 #include <errno.h>
 #include "lvgl/lvgl.h"
 #include "lvgl/src/font/lv_font.h"
+#include "lvgl/src/font/lv_symbol_def.h"
+
+/* 声明FontAwesome字体 */
+extern const lv_font_t fa_solid_24;
+
+/* 自定义符号定义 */
+#define CUSTOM_SYMBOL_VOLUME_MAX "\xEF\x80\xA8"  // FontAwesome volume-max icon (U+F028) - 圆形喇叭
 
 /* 声明SourceHanSansSC_VF字体 */
 #if LV_FONT_SOURCE_HAN_SANS_SC_VF
@@ -42,6 +51,8 @@ static char password_input[32] = {0};  // 输入的密码
 static int password_len = 0;  // 当前密码长度
 static int buzzer_fd = -1;  // 蜂鸣器文件描述符
 static int led_fd = -1;  // LED文件描述符
+static bool buzzer_enabled = true;  // 蜂鸣器开关状态，默认开启
+static lv_obj_t *buzzer_btn = NULL;  // 蜂鸣器控制按钮
 
 /* 正确密码 */
 #define CORRECT_PASSWORD "114514"
@@ -51,7 +62,7 @@ static int led_fd = -1;  // LED文件描述符
  * @brief 触发蜂鸣器（短响）
  */
 static void beep_once(void) {
-    if (buzzer_fd >= 0) {
+    if (buzzer_enabled && buzzer_fd >= 0) {
         ioctl(buzzer_fd, BUZZ_ON);
         usleep(100000);  // 100ms
         ioctl(buzzer_fd, BUZZ_OFF);
@@ -77,14 +88,11 @@ static bool load_buzzer_driver(void) {
         NULL
     };
 
-    bool buzzer_loaded = false;
-
     // 加载蜂鸣器驱动
     for (int i = 0; driver_paths[i] != NULL; i++) {
         char cmd[256];
         snprintf(cmd, sizeof(cmd), "insmod %s%s", driver_paths[i], "buzz_misc.ko");
         if (system(cmd) == 0) {
-            buzzer_loaded = true;
             break;
         }
     }
@@ -123,14 +131,11 @@ static bool load_led_driver(void) {
         NULL
     };
 
-    bool led_loaded = false;
-
     // 加载LED驱动
     for (int i = 0; driver_paths[i] != NULL; i++) {
         char cmd[256];
         snprintf(cmd, sizeof(cmd), "insmod %s%s", driver_paths[i], "leds_misc.ko");
         if (system(cmd) == 0) {
-            led_loaded = true;
             break;
         }
     }
@@ -250,10 +255,9 @@ static void keypad_btn_event_handler(lv_event_t *e) {
         return;
     }
     
-    char key = btn_text[0];
-    
-    // 处理删除键（*键作为删除，不触发蜂鸣器）
-    if (key == '*') {
+    // 使用字符串比较来处理符号（LVGL符号是多字节字符）
+    // 处理删除键（LV_SYMBOL_CLOSE作为删除，不触发蜂鸣器）
+    if (strcmp(btn_text, LV_SYMBOL_CLOSE) == 0 || btn_text[0] == '*') {
         if (password_len > 0) {
             password_len--;
             password_input[password_len] = '\0';
@@ -262,8 +266,8 @@ static void keypad_btn_event_handler(lv_event_t *e) {
         return;
     }
     
-    // 处理确认键（#键作为确认，不触发蜂鸣器）
-    if (key == '#') {
+    // 处理确认键（LV_SYMBOL_OK作为确认，不触发蜂鸣器）
+    if (strcmp(btn_text, LV_SYMBOL_OK) == 0 || btn_text[0] == '#') {
         // 验证密码
         if (strcmp(password_input, CORRECT_PASSWORD) == 0) {
             // 登录成功：LED闪烁2次（较慢闪烁）
@@ -310,15 +314,54 @@ static void keypad_btn_event_handler(lv_event_t *e) {
     }
     
     // 处理数字键（0-9），触发蜂鸣器
-    if (key >= '0' && key <= '9') {
-        // 触发蜂鸣器
-        //beep_once();
+    // 检查第一个字符是否为数字
+    if (btn_text[0] >= '0' && btn_text[0] <= '9') {
+        // 触发蜂鸣器（如果启用）
+        beep_once();
         
         if (password_len < MAX_PASSWORD_LEN - 1) {
-            password_input[password_len] = key;
+            password_input[password_len] = btn_text[0];
             password_len++;
             password_input[password_len] = '\0';
             update_password_display();
+        }
+    }
+}
+
+/**
+ * @brief 退出按钮事件处理
+ */
+static void exit_btn_event_handler(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
+        return;
+    }
+    exit_application();
+}
+
+/**
+ * @brief 蜂鸣器控制按钮事件处理
+ */
+static void buzzer_btn_event_handler(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
+        return;
+    }
+    
+    // 切换蜂鸣器开关状态
+    buzzer_enabled = !buzzer_enabled;
+    
+    // 更新按钮样式和图标
+    if (buzzer_btn) {
+        lv_obj_t *icon_label = lv_obj_get_child(buzzer_btn, 0);
+        if (icon_label) {
+            lv_label_set_text(icon_label, CUSTOM_SYMBOL_VOLUME_MAX);
+            // 根据开关状态设置颜色：开启=蓝色，关闭=灰色
+            if (buzzer_enabled) {
+                lv_obj_set_style_bg_color(buzzer_btn, lv_color_hex(0x2196F3), 0);
+                lv_obj_set_style_text_color(icon_label, lv_color_hex(0xFFFFFF), 0);
+            } else {
+                lv_obj_set_style_bg_color(buzzer_btn, lv_color_hex(0x9E9E9E), 0);
+                lv_obj_set_style_text_color(icon_label, lv_color_hex(0xFFFFFF), 0);
+            }
         }
     }
 }
@@ -360,8 +403,9 @@ void login_win_show(void) {
         lv_obj_set_size(password_display, 400, 60);
         lv_obj_align(password_display, LV_ALIGN_TOP_MID, 0, 30);
         
-        // 创建数字键盘（3x4布局：1-9, *, 0, #，往上移）
-        const char *keypad_labels[12] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"};
+        // 创建数字键盘（3x4布局：1-9, ×, 0, √，往上移）
+        // 使用LVGL内置符号：LV_SYMBOL_CLOSE (×) 和 LV_SYMBOL_OK (√)
+        const char *keypad_labels[12] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", LV_SYMBOL_CLOSE, "0", LV_SYMBOL_OK};
         int btn_width = 80;
         int btn_height = 80;
         int btn_spacing = 10;
@@ -378,12 +422,13 @@ void login_win_show(void) {
             lv_obj_set_size(keypad_btns[i], btn_width, btn_height);
             lv_obj_set_pos(keypad_btns[i], x, y);
             
-            // 根据按键类型设置颜色：*（取消键）为红色，#（确认键）为绿色
-            if (keypad_labels[i][0] == '*') {
+            // 根据按键类型设置颜色：LV_SYMBOL_CLOSE（取消键）为红色，LV_SYMBOL_OK（确认键）为绿色
+            // 使用字符串比较来处理LVGL符号
+            if (strcmp(keypad_labels[i], LV_SYMBOL_CLOSE) == 0) {
                 // 取消键：红色
                 lv_obj_set_style_bg_color(keypad_btns[i], lv_color_hex(0xF44336), 0);
                 lv_obj_set_style_border_color(keypad_btns[i], lv_color_hex(0xd32f2f), 0);
-            } else if (keypad_labels[i][0] == '#') {
+            } else if (strcmp(keypad_labels[i], LV_SYMBOL_OK) == 0) {
                 // 确认键：绿色
                 lv_obj_set_style_bg_color(keypad_btns[i], lv_color_hex(0x4CAF50), 0);
                 lv_obj_set_style_border_color(keypad_btns[i], lv_color_hex(0x388e3c), 0);
@@ -396,11 +441,31 @@ void login_win_show(void) {
             
             lv_obj_t *btn_label = lv_label_create(keypad_btns[i]);
             lv_label_set_text(btn_label, keypad_labels[i]);
-            lv_obj_set_style_text_font(btn_label, &SourceHanSansSC_VF, 0);
-            // 对于彩色按钮，文字使用白色；数字键使用黑色
-            if (keypad_labels[i][0] == '*' || keypad_labels[i][0] == '#') {
+            // 对于符号按钮，使用LVGL默认字体（包含FontAwesome符号）
+            // 对于数字键，使用中文字体
+            if (strcmp(keypad_labels[i], LV_SYMBOL_CLOSE) == 0 || strcmp(keypad_labels[i], LV_SYMBOL_OK) == 0) {
+                // 符号按钮：使用LVGL默认字体（Montserrat，包含FontAwesome符号）
+                // 使用条件编译选择可用的字体
+                #if LV_FONT_MONTSERRAT_20
+                extern const lv_font_t lv_font_montserrat_20;
+                lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_20, 0);
+                #elif LV_FONT_MONTSERRAT_18
+                extern const lv_font_t lv_font_montserrat_18;
+                lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_18, 0);
+                #elif LV_FONT_MONTSERRAT_16
+                extern const lv_font_t lv_font_montserrat_16;
+                lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_16, 0);
+                #elif LV_FONT_MONTSERRAT_14
+                extern const lv_font_t lv_font_montserrat_14;
+                lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_14, 0);
+                #else
+                // 如果没有可用的Montserrat字体，使用默认字体
+                lv_obj_set_style_text_font(btn_label, LV_FONT_DEFAULT, 0);
+                #endif
                 lv_obj_set_style_text_color(btn_label, lv_color_hex(0xffffff), 0);
             } else {
+                // 数字键：使用中文字体
+                lv_obj_set_style_text_font(btn_label, &SourceHanSansSC_VF, 0);
                 lv_obj_set_style_text_color(btn_label, lv_color_hex(0x1a1a1a), 0);
             }
             lv_obj_center(btn_label);
@@ -415,6 +480,42 @@ void login_win_show(void) {
         lv_obj_set_style_text_color(error_label, lv_color_hex(0xff0000), 0);
         lv_obj_align(error_label, LV_ALIGN_BOTTOM_MID, 0, -20);
         lv_obj_add_flag(error_label, LV_OBJ_FLAG_HIDDEN);
+        
+        // 蜂鸣器控制按钮（圆形喇叭图标）
+        buzzer_btn = lv_btn_create(login_screen);
+        lv_obj_set_size(buzzer_btn, 60, 60);
+        lv_obj_set_style_bg_color(buzzer_btn, lv_color_hex(0x2196F3), 0);  // 蓝色（开启状态）
+        lv_obj_set_style_radius(buzzer_btn, LV_RADIUS_CIRCLE, 0);  // 圆形按钮
+        lv_obj_align(buzzer_btn, LV_ALIGN_TOP_RIGHT, -20, 20);
+        lv_obj_move_foreground(buzzer_btn);
+        lv_obj_t *buzzer_icon = lv_label_create(buzzer_btn);
+        lv_label_set_text(buzzer_icon, CUSTOM_SYMBOL_VOLUME_MAX);
+        lv_obj_set_style_text_font(buzzer_icon, &fa_solid_24, 0);
+        lv_obj_set_style_text_color(buzzer_icon, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_center(buzzer_icon);
+        lv_obj_add_event_cb(buzzer_btn, buzzer_btn_event_handler, LV_EVENT_CLICKED, NULL);
+        
+        // 退出程序按钮（右下角，红色，小圆角矩形，带图标）
+        lv_obj_t *exit_btn = lv_btn_create(login_screen);
+        lv_obj_set_size(exit_btn, 100, 50);
+        lv_obj_set_style_bg_color(exit_btn, lv_color_hex(0xF44336), 0);  // 红色
+        lv_obj_set_style_radius(exit_btn, 8, 0);  // 小圆角
+        lv_obj_clear_flag(exit_btn, LV_OBJ_FLAG_SCROLLABLE);  // 禁用滚动
+        lv_obj_align(exit_btn, LV_ALIGN_BOTTOM_RIGHT, -20, -20);
+        lv_obj_move_foreground(exit_btn);
+        
+        // 退出图标和文字直接放在按钮上（不使用容器，避免滚动条）
+        lv_obj_t *exit_label = lv_label_create(exit_btn);
+        // 使用图标和文字组合
+        char exit_text[32];
+        snprintf(exit_text, sizeof(exit_text), "%s 退出", LV_SYMBOL_POWER);
+        lv_label_set_text(exit_label, exit_text);
+        lv_obj_set_style_text_font(exit_label, &SourceHanSansSC_VF, 0);
+        lv_obj_set_style_text_color(exit_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_center(exit_label);
+        
+        // 退出按钮事件处理
+        lv_obj_add_event_cb(exit_btn, exit_btn_event_handler, LV_EVENT_CLICKED, NULL);
         
         // 初始化密码
         password_len = 0;

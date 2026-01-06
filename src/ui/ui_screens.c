@@ -21,118 +21,192 @@
 #include <string.h>
 #include "lvgl/lvgl.h"
 #include "lvgl/src/font/lv_font.h"
+#include "lvgl/src/font/lv_symbol_def.h"  // LVGL内置图标定义
 
 /* 声明SourceHanSansSC_VF字体（定义在bin/SourceHanSansSC_VF.c中） */
 #if LV_FONT_SOURCE_HAN_SANS_SC_VF
 extern const lv_font_t SourceHanSansSC_VF;
 #endif
 
+/* 声明FontAwesome字体（定义在bin/FA-solid-900.c中） */
+extern const lv_font_t fa_solid_24;
+
+/* 自定义符号定义（FontAwesome图标，需要字体支持） */
+// 注意：这些符号只有在字体包含这些字符时才能正确显示
+// 如果字体不包含，可能需要使用LVGL字体转换器添加这些字符
+#define CUSTOM_SYMBOL_SUN       "\xEF\x86\x85"  // FontAwesome sun icon (U+F185)
+#define CUSTOM_SYMBOL_CLOCK     "\xEF\x80\x97"  // FontAwesome clock icon (U+F017)
+#define CUSTOM_SYMBOL_GAMEPAD   "\xEF\x84\x9B"  // FontAwesome gamepad icon (U+F11B)
+#define CUSTOM_SYMBOL_LIGHTBULB "\xEF\x83\xAB"  // FontAwesome lightbulb icon (U+F0EB)
+#define CUSTOM_SYMBOL_VOLUME_MAX "\xEF\x80\xA8"  // FontAwesome volume-max icon (U+F028) - 圆形喇叭
+
 /**
  * @brief 创建主屏幕
  */
+/**
+ * @brief 递归查找label对象（用于获取按钮文本）
+ */
+static lv_obj_t* find_label_recursive(lv_obj_t *obj) {
+    if (!obj) return NULL;
+    
+    // 检查当前对象是否是label
+    if (lv_obj_check_type(obj, &lv_label_class)) {
+        return obj;
+    }
+    
+    // 递归检查所有子对象
+    uint32_t child_cnt = lv_obj_get_child_cnt(obj);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t *child = lv_obj_get_child(obj, i);
+        lv_obj_t *label = find_label_recursive(child);
+        if (label) return label;
+    }
+    
+    return NULL;
+}
+
+/**
+ * @brief 创建带图标和文字的按钮（九宫格布局）
+ */
+static lv_obj_t* create_icon_button(lv_obj_t *parent, const char *icon, const char *text, 
+                                     int x, int y, int width, int height, 
+                                     lv_color_t bg_color, lv_color_t text_color) {
+    // 创建按钮
+    lv_obj_t *btn = lv_btn_create(parent);
+    lv_obj_set_size(btn, width, height);
+    lv_obj_set_pos(btn, x, y);
+    lv_obj_set_style_bg_color(btn, bg_color, 0);
+    lv_obj_set_style_radius(btn, 12, 0);
+    lv_obj_set_style_border_width(btn, 2, 0);
+    lv_obj_set_style_border_color(btn, lv_color_hex(0xCCCCCC), 0);
+    lv_obj_set_style_shadow_width(btn, 5, 0);
+    lv_obj_set_style_shadow_color(btn, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_shadow_ofs_x(btn, 2, 0);
+    lv_obj_set_style_shadow_ofs_y(btn, 2, 0);
+    
+    // 将文本存储为用户数据（用于事件处理）
+    if (text) {
+        lv_obj_set_user_data(btn, (void*)text);
+    }
+    
+    // 创建容器用于垂直排列图标和文字
+    lv_obj_t *container = lv_obj_create(btn);
+    lv_obj_set_size(container, width, height);
+    lv_obj_set_pos(container, 0, 0);
+    lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(container, 0, 0);
+    lv_obj_set_style_pad_all(container, 5, 0);
+    lv_obj_set_flex_flow(container, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(container, LV_OBJ_FLAG_CLICKABLE);  // 容器不拦截点击事件
+    
+    // 创建图标标签（使用FontAwesome字体显示图标）
+    if (icon) {
+        lv_obj_t *icon_label = lv_label_create(container);
+        lv_label_set_text(icon_label, icon);
+        // 使用FontAwesome字体来显示图标（包含所有FontAwesome图标）
+        lv_obj_set_style_text_font(icon_label, &fa_solid_24, 0);
+        lv_obj_set_style_text_color(icon_label, text_color, 0);
+        lv_obj_set_style_text_align(icon_label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(icon_label, LV_PCT(100));  // 设置宽度为100%确保居中
+        lv_obj_clear_flag(icon_label, LV_OBJ_FLAG_CLICKABLE);  // 图标不拦截点击事件
+    }
+    
+    // 创建文字标签
+    if (text) {
+        lv_obj_t *text_label = lv_label_create(container);
+        lv_label_set_text(text_label, text);
+        lv_obj_set_style_text_font(text_label, &SourceHanSansSC_VF, 0);
+        lv_obj_set_style_text_color(text_label, text_color, 0);
+        lv_obj_set_style_text_align(text_label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_clear_flag(text_label, LV_OBJ_FLAG_CLICKABLE);  // 文字不拦截点击事件
+    }
+    
+    return btn;
+}
+
 void create_main_screen(void) {
     main_screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(main_screen, lv_color_hex(0xf0f0f0), 0);
+    lv_obj_set_style_bg_color(main_screen, lv_color_hex(0xf5f5f5), 0);
     
     /* 创建标题 */
     lv_obj_t *title = lv_label_create(main_screen);
     lv_label_set_text(title, "LVGL多媒体系统");
     lv_obj_set_style_text_font(title, &SourceHanSansSC_VF, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0x1a1a1a), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
     
-    /* 创建按钮容器 - 参考main_win.c的布局 */
-    // 创建相册按钮
-    lv_obj_t *album_btn = lv_btn_create(main_screen);
-    lv_obj_set_size(album_btn, 150, 80);
-    lv_obj_align(album_btn, LV_ALIGN_TOP_LEFT, 30, 60);
-    lv_obj_t *album_label = lv_label_create(album_btn);
-    lv_label_set_text(album_label, "相册");
-    lv_obj_set_style_text_font(album_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(album_label);
+    /* 九宫格布局参数 */
+    const int btn_width = 220;      // 按钮宽度（增大）
+    const int btn_height = 120;      // 按钮高度（增大）
+    const int btn_spacing = 20;      // 按钮间距
+    const int start_x = 40;          // 起始X坐标
+    const int start_y = 60;          // 起始Y坐标
+    
+    // 计算每行每列的位置
+    int col1_x = start_x;
+    int col2_x = start_x + btn_width + btn_spacing;
+    int col3_x = start_x + (btn_width + btn_spacing) * 2;
+    
+    int row1_y = start_y;
+    int row2_y = start_y + btn_height + btn_spacing;
+    int row3_y = start_y + (btn_height + btn_spacing) * 2;
+    
+    /* 第一行：相册、视频、音乐 */
+    // 相册按钮（左上）- 使用图片图标
+    lv_obj_t *album_btn = create_icon_button(main_screen, LV_SYMBOL_IMAGE, "相册", 
+                                             col1_x, row1_y, btn_width, btn_height,
+                                             lv_color_hex(0x4CAF50), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(album_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
-
-    // 创建视频按钮
-    lv_obj_t *video_btn = lv_btn_create(main_screen);
-    lv_obj_set_size(video_btn, 150, 80);
-    lv_obj_align(video_btn, LV_ALIGN_TOP_MID, 0, 60);
-    lv_obj_t *video_label = lv_label_create(video_btn);
-    lv_label_set_text(video_label, "视频");
-    lv_obj_set_style_text_font(video_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(video_label);
+    
+    // 视频按钮（中上）- 使用视频图标
+    lv_obj_t *video_btn = create_icon_button(main_screen, LV_SYMBOL_VIDEO, "视频", 
+                                             col2_x, row1_y, btn_width, btn_height,
+                                             lv_color_hex(0x2196F3), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(video_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
-
-    // 创建音乐按钮
-    lv_obj_t *music_btn = lv_btn_create(main_screen);
-    lv_obj_set_size(music_btn, 150, 80);
-    lv_obj_align(music_btn, LV_ALIGN_TOP_RIGHT, -30, 60);
-    lv_obj_t *music_label = lv_label_create(music_btn);
-    lv_label_set_text(music_label, "音乐");
-    lv_obj_set_style_text_font(music_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(music_label);
+    
+    // 音乐按钮（右上）- 使用音频图标
+    lv_obj_t *music_btn = create_icon_button(main_screen, LV_SYMBOL_AUDIO, "音乐", 
+                                             col3_x, row1_y, btn_width, btn_height,
+                                             lv_color_hex(0x9C27B0), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(music_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
-
-    // 创建LED按钮（第二行，左侧）
-    lv_obj_t *led_btn = lv_btn_create(main_screen);
-    lv_obj_set_size(led_btn, 150, 80);
-    lv_obj_align(led_btn, LV_ALIGN_TOP_LEFT, 30, 160);
-    lv_obj_t *led_label = lv_label_create(led_btn);
-    lv_label_set_text(led_label, "LED控制");
-    lv_obj_set_style_text_font(led_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(led_label);
+    
+    /* 第二行：LED控制、天气、计时器 */
+    // LED控制按钮（左中）- 使用小灯泡图标（FontAwesome）
+    lv_obj_t *led_btn = create_icon_button(main_screen, CUSTOM_SYMBOL_LIGHTBULB, "LED控制", 
+                                           col1_x, row2_y, btn_width, btn_height,
+                                           lv_color_hex(0xFF9800), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(led_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
-
-    // 创建天气按钮（第二行，中间）
-    lv_obj_t *weather_btn = lv_btn_create(main_screen);
-    lv_obj_set_size(weather_btn, 150, 80);
-    lv_obj_align(weather_btn, LV_ALIGN_TOP_MID, 0, 160);
-    lv_obj_t *weather_label = lv_label_create(weather_btn);
-    lv_label_set_text(weather_label, "天气");
-    lv_obj_set_style_text_font(weather_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(weather_label);
+    
+    // 天气按钮（中中）- 使用太阳图标（FontAwesome）
+    lv_obj_t *weather_btn = create_icon_button(main_screen, CUSTOM_SYMBOL_SUN, "天气", 
+                                                col2_x, row2_y, btn_width, btn_height,
+                                                lv_color_hex(0xFFC107), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(weather_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
-
-    // 创建计时器按钮（第二行，右侧）
-    lv_obj_t *timer_btn = lv_btn_create(main_screen);
-    lv_obj_set_size(timer_btn, 150, 80);
-    lv_obj_align(timer_btn, LV_ALIGN_TOP_RIGHT, -30, 160);
-    lv_obj_t *timer_label = lv_label_create(timer_btn);
-    lv_label_set_text(timer_label, "计时器");
-    lv_obj_set_style_text_font(timer_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(timer_label);
+    
+    // 计时器按钮（右中）- 使用铃铛图标（代表提醒/计时）
+    lv_obj_t *timer_btn = create_icon_button(main_screen, LV_SYMBOL_BELL, "计时器", 
+                                             col3_x, row2_y, btn_width, btn_height,
+                                             lv_color_hex(0x00BCD4), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(timer_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
-
-    // 创建时钟按钮（第三行，左侧）
-    lv_obj_t *clock_btn = lv_btn_create(main_screen);
-    lv_obj_set_size(clock_btn, 150, 80);
-    lv_obj_align(clock_btn, LV_ALIGN_TOP_LEFT, 30, 260);
-    lv_obj_t *clock_label = lv_label_create(clock_btn);
-    lv_label_set_text(clock_label, "时钟");
-    lv_obj_set_style_text_font(clock_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(clock_label);
+    
+    /* 第三行：时钟、2048、退出 */
+    // 时钟按钮（左下）- 使用钟面图标（FontAwesome）
+    lv_obj_t *clock_btn = create_icon_button(main_screen, CUSTOM_SYMBOL_CLOCK, "时钟", 
+                                             col1_x, row3_y, btn_width, btn_height,
+                                             lv_color_hex(0x607D8B), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(clock_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
-
-    // 创建2048游戏按钮（第三行，中间）
-    lv_obj_t *game2048_btn = lv_btn_create(main_screen);
-    lv_obj_set_size(game2048_btn, 150, 80);
-    lv_obj_align(game2048_btn, LV_ALIGN_TOP_MID, 0, 260);
-    lv_obj_t *game2048_label = lv_label_create(game2048_btn);
-    lv_label_set_text(game2048_label, "2048");
-    lv_obj_set_style_text_font(game2048_label, &SourceHanSansSC_VF, 0);
-    lv_obj_center(game2048_label);
+    
+    // 2048游戏按钮（中下）- 使用游戏手柄图标（FontAwesome）
+    lv_obj_t *game2048_btn = create_icon_button(main_screen, CUSTOM_SYMBOL_GAMEPAD, "2048", 
+                                                 col2_x, row3_y, btn_width, btn_height,
+                                                 lv_color_hex(0xE91E63), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(game2048_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
     
-    // 创建退出按钮（第四行，居中，红色）
-    lv_obj_t *exit_btn = lv_btn_create(main_screen);
-    lv_obj_set_size(exit_btn, 150, 80);
-    lv_obj_align(exit_btn, LV_ALIGN_TOP_MID, 0, 360);
-    lv_obj_set_style_bg_color(exit_btn, lv_color_hex(0xF44336), 0);
-    lv_obj_set_style_border_color(exit_btn, lv_color_hex(0xd32f2f), 0);
-    lv_obj_t *exit_label = lv_label_create(exit_btn);
-    lv_label_set_text(exit_label, "退出");
-    lv_obj_set_style_text_font(exit_label, &SourceHanSansSC_VF, 0);
-    lv_obj_set_style_text_color(exit_label, lv_color_hex(0xffffff), 0);
-    lv_obj_center(exit_label);
+    // 退出按钮（右下，红色）- 使用关闭图标
+    lv_obj_t *exit_btn = create_icon_button(main_screen, LV_SYMBOL_CLOSE, "退出", 
+                                             col3_x, row3_y, btn_width, btn_height,
+                                             lv_color_hex(0xF44336), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(exit_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
 }
 
@@ -628,10 +702,18 @@ void main_window_event_handler(lv_event_t *e) {
     }
     
     lv_obj_t *btn = lv_event_get_target(e);
-    lv_obj_t *label = lv_obj_get_child(btn, 0);
-    if (!label) return;
     
-    const char *text = lv_label_get_text(label);
+    // 优先从用户数据获取文本（新按钮使用这种方式）
+    const char *text = (const char *)lv_obj_get_user_data(btn);
+    
+    // 如果没有用户数据，则尝试从label获取（兼容旧按钮）
+    if (!text) {
+        lv_obj_t *label = find_label_recursive(btn);
+        if (label) {
+            text = lv_label_get_text(label);
+        }
+    }
+    
     if (!text) return;
     
     // 在进入任何功能前，先清理所有其他模块
