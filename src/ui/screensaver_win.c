@@ -283,42 +283,42 @@ void screensaver_win_show(void) {
         lv_canvas_set_buffer(clock_canvas, clock_buf, CLOCK_SIZE, CLOCK_SIZE, LV_IMG_CF_TRUE_COLOR_ALPHA);
         lv_obj_align(clock_canvas, LV_ALIGN_CENTER, 0, -100);  // 调整位置，为更大的时间标签留出空间
         
-        // 创建时间标签（增大字体和尺寸，添加阴影效果）
+        // 创建时间标签（简洁自然的样式）
         time_label = lv_label_create(screensaver_window);
         lv_label_set_text(time_label, "00:00");
         lv_obj_set_style_text_font(time_label, &SourceHanSansSC_VF, 0);
         lv_obj_set_style_text_color(time_label, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_align(time_label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_opa(time_label, LV_OPA_COVER, 0);
-        // 使用更大的尺寸和加粗效果
-        lv_obj_set_style_text_letter_space(time_label, 8, 0);  // 增加字符间距，让文字看起来更大
+        // 字符间距，让文字更清晰
+        lv_obj_set_style_text_letter_space(time_label, 8, 0);
         lv_obj_set_style_text_line_space(time_label, 0, 0);
-        lv_obj_set_style_pad_all(time_label, 5, 0);  // 增加内边距
-        // 添加阴影效果，使文字更醒目
-        lv_obj_set_style_shadow_color(time_label, lv_color_hex(0x000000), 0);
-        lv_obj_set_style_shadow_width(time_label, 3, 0);
-        lv_obj_set_style_shadow_ofs_x(time_label, 2, 0);
-        lv_obj_set_style_shadow_ofs_y(time_label, 2, 0);
-        lv_obj_set_style_shadow_opa(time_label, LV_OPA_50, 0);
+        // 移除内边距，避免按钮感
+        lv_obj_set_style_pad_all(time_label, 0, 0);
+        // 移除背景和边框，使其更自然
+        lv_obj_set_style_bg_opa(time_label, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_opa(time_label, LV_OPA_TRANSP, 0);
+        // 移除阴影效果
+        lv_obj_set_style_shadow_opa(time_label, LV_OPA_TRANSP, 0);
         lv_obj_set_size(time_label, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
         lv_obj_align(time_label, LV_ALIGN_CENTER, 0, 30);  // 调整位置
         
-        // 创建星期标签（增大字体和尺寸，添加阴影效果）
+        // 创建星期标签（简洁自然的样式）
         weekday_label = lv_label_create(screensaver_window);
         lv_label_set_text(weekday_label, "星期一");
         lv_obj_set_style_text_font(weekday_label, &SourceHanSansSC_VF, 0);
         lv_obj_set_style_text_color(weekday_label, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_align(weekday_label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_opa(weekday_label, LV_OPA_COVER, 0);
-        // 使用更大的尺寸
-        lv_obj_set_style_text_letter_space(weekday_label, 5, 0);  // 增加字符间距
-        lv_obj_set_style_pad_all(weekday_label, 5, 0);  // 增加内边距
-        // 添加阴影效果，使文字更醒目
-        lv_obj_set_style_shadow_color(weekday_label, lv_color_hex(0x000000), 0);
-        lv_obj_set_style_shadow_width(weekday_label, 3, 0);
-        lv_obj_set_style_shadow_ofs_x(weekday_label, 2, 0);
-        lv_obj_set_style_shadow_ofs_y(weekday_label, 2, 0);
-        lv_obj_set_style_shadow_opa(weekday_label, LV_OPA_50, 0);
+        // 字符间距
+        lv_obj_set_style_text_letter_space(weekday_label, 5, 0);
+        // 移除内边距，避免按钮感
+        lv_obj_set_style_pad_all(weekday_label, 0, 0);
+        // 移除背景和边框，使其更自然
+        lv_obj_set_style_bg_opa(weekday_label, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_opa(weekday_label, LV_OPA_TRANSP, 0);
+        // 移除阴影效果
+        lv_obj_set_style_shadow_opa(weekday_label, LV_OPA_TRANSP, 0);
         lv_obj_set_size(weekday_label, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
         lv_obj_align(weekday_label, LV_ALIGN_CENTER, 0, 85);  // 调整位置
         

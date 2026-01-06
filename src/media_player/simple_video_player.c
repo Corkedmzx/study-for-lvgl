@@ -91,20 +91,13 @@ static bool start_mplayer(const char *file_path) {
         
         execlp("mplayer", "mplayer",
               "-vo", "fbdev2",        // 使用fbdev2
-              "-fs",
-              "-zoom",
-              "-quiet",
+              "-cache", "32768",     // 缓存大小
+              "-lavdopts", "skipframe=nonref:skiploopfilter=all:fast:threads=8",  // 解码器优化选项
+              "-vf", "scale=800:480,format=bgr24",  // 视频滤镜：缩放为800x480，格式为bgr24
+              "-framedrop",          // 抽帧减少卡顿
+              "-nocorrect-pts",      // 不校正时间戳
               "-slave",              // 保留slave模式用于FIFO控制（触控功能需要）
               "-input", "file=/tmp/mplayer_fifo",  // FIFO控制（触控功能需要）
-              "-x", "800",           // 强制输出宽度为800（参考video.c）
-              "-y", "480",           // 强制输出高度为480（参考video.c）
-              "-vf", "format=bgra",  // 转换为BGRA格式（32位，已验证可用）
-              "-lavdopts", "skiploopfilter=all",  // 快速解码（参考video.c）
-              "-framedrop",          // 抽帧减少卡顿（性能优化）
-              "-autosync", "30",     // 自动同步（性能优化）
-              "-cache", "32768",     // 缓存大小（性能优化）
-              "-cache-min", "50",    // 最小缓存（性能优化）
-              "-ao", "oss",          // 音频输出
               file_path,
               NULL);
               
@@ -177,10 +170,54 @@ static void stop_mplayer(void) {
 }
 
 /**
+ * @brief 检查MPlayer进程是否还在运行
+ */
+static bool check_mplayer_running(void) {
+    if (mplayer_pid == -1) {
+        return false;
+    }
+    // 使用WNOHANG非阻塞检查
+    int status;
+    pid_t result = waitpid(mplayer_pid, &status, WNOHANG);
+    if (result > 0) {
+        // 进程已结束
+        printf("[视频播放] 检测到MPlayer进程已退出\n");
+        mplayer_pid = -1;
+        if (mplayer_control_pipe != -1) {
+            close(mplayer_control_pipe);
+            mplayer_control_pipe = -1;
+        }
+        is_playing = false;
+        is_paused = false;
+        return false;
+    } else if (result == -1) {
+        // 错误（可能是进程不存在）
+        perror("[视频播放] waitpid检查失败");
+        mplayer_pid = -1;
+        if (mplayer_control_pipe != -1) {
+            close(mplayer_control_pipe);
+            mplayer_control_pipe = -1;
+        }
+        is_playing = false;
+        is_paused = false;
+        return false;
+    }
+    return true;
+}
+
+/**
  * @brief 强制停止MPlayer进程（参考video.c，但先尝试FIFO命令）
  */
 static void force_stop_mplayer(void) {
     printf("[视频播放] 开始强制停止MPlayer\n");
+    
+    // 先检查进程是否还在运行
+    if (!check_mplayer_running()) {
+        printf("[视频播放] MPlayer进程已退出，无需停止\n");
+        // 清理FIFO
+        (void)system("rm -f /tmp/mplayer_fifo");
+        return;
+    }
     
     // 先尝试通过FIFO发送quit命令
     if (mplayer_control_pipe != -1) {
@@ -188,6 +225,14 @@ static void force_stop_mplayer(void) {
         close(mplayer_control_pipe);
         mplayer_control_pipe = -1;
         usleep(200000);  // 等待200ms
+    }
+    
+    // 再次检查进程是否还在运行（可能已经通过quit命令退出）
+    if (!check_mplayer_running()) {
+        printf("[视频播放] MPlayer已通过quit命令退出\n");
+        // 清理FIFO
+        (void)system("rm -f /tmp/mplayer_fifo");
+        return;
     }
     
     // 使用SIGTERM终止进程（参考video.c）
@@ -525,6 +570,41 @@ void simple_video_volume_down(void) {
 bool simple_video_is_playing(void) {
     bool result;
     pthread_mutex_lock(&player_mutex);
+    
+    // 如果状态显示正在播放，检查进程是否还在运行
+    if (is_playing) {
+        // 检查进程是否还在运行，如果已退出则更新状态
+        if (mplayer_pid != -1) {
+            int status;
+            pid_t wait_result = waitpid(mplayer_pid, &status, WNOHANG);
+            if (wait_result > 0) {
+                // 进程已结束
+                printf("[视频播放] 检测到MPlayer进程已退出，更新播放状态\n");
+                mplayer_pid = -1;
+                if (mplayer_control_pipe != -1) {
+                    close(mplayer_control_pipe);
+                    mplayer_control_pipe = -1;
+                }
+                is_playing = false;
+                is_paused = false;
+            } else if (wait_result == -1) {
+                // 错误（可能是进程不存在）
+                printf("[视频播放] 检查MPlayer进程状态失败，更新播放状态\n");
+                mplayer_pid = -1;
+                if (mplayer_control_pipe != -1) {
+                    close(mplayer_control_pipe);
+                    mplayer_control_pipe = -1;
+                }
+                is_playing = false;
+                is_paused = false;
+            }
+        } else {
+            // PID无效，认为已停止
+            is_playing = false;
+            is_paused = false;
+        }
+    }
+    
     result = is_playing;
     pthread_mutex_unlock(&player_mutex);
     return result;

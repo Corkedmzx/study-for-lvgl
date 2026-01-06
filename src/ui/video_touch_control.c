@@ -15,7 +15,6 @@
 #include <fcntl.h>
 #include <linux/input.h>
 #include <errno.h>
-#include <stdlib.h>  // For abs()
 
 // 屏幕尺寸（需要根据实际屏幕调整）
 #define SCREEN_WIDTH 800
@@ -94,27 +93,50 @@ static void handle_click(int x, int y) {
         // 等待触屏控制线程完全停止
         usleep(150000);  // 150ms
         
-        // 立即强制停止mplayer（使用SIGTERM，参考video.c的简单方式）
-        extern void simple_video_force_stop(void);
-        simple_video_force_stop();
-        // 等待MPlayer完全退出和framebuffer恢复（增加等待时间，确保framebuffer完全恢复）
-        usleep(500000);  // 500ms，确保framebuffer已完全恢复
+        // 检查视频是否还在播放，如果还在播放才需要停止
+        extern bool simple_video_is_playing(void);
+        if (simple_video_is_playing()) {
+            // 立即强制停止mplayer（使用SIGTERM，参考video.c的简单方式）
+            extern void simple_video_force_stop(void);
+            simple_video_force_stop();
+            // 等待MPlayer完全退出和framebuffer恢复（增加等待时间，确保framebuffer完全恢复）
+            usleep(500000);  // 500ms，确保framebuffer已完全恢复
+        } else {
+            printf("[触屏控制] 视频已停止，无需再次停止\n");
+            // 即使视频已停止，也等待一下确保framebuffer稳定
+            usleep(200000);  // 200ms
+        }
         
         // 设置标志，让主线程处理返回主页（不在触屏控制线程中操作LVGL，避免线程安全问题）
         extern bool need_return_to_main;
         need_return_to_main = true;
     } else if (is_bottom_left_area(x, y)) {
-        // 左下：上一首
+        // 左下：上一首（即使视频已结束也可以切换）
         printf("[触屏控制] 左下角点击: 上一首\n");
+        // 检查视频是否在播放，如果已停止则直接切换
+        extern bool simple_video_is_playing(void);
+        if (!simple_video_is_playing()) {
+            printf("[触屏控制] 当前视频已结束，切换到上一首\n");
+        }
         simple_video_prev();
     } else if (is_bottom_right_area(x, y)) {
-        // 右下：下一首视频
+        // 右下：下一首视频（即使视频已结束也可以切换）
         printf("[触屏控制] 右下角点击: 下一首视频\n");
+        // 检查视频是否在播放，如果已停止则直接切换
+        extern bool simple_video_is_playing(void);
+        if (!simple_video_is_playing()) {
+            printf("[触屏控制] 当前视频已结束，切换到下一首\n");
+        }
         simple_video_next();
     } else if (is_top_right_area(x, y)) {
-        // 右上：暂停
+        // 右上：暂停/恢复（只有视频播放时才有效）
         printf("[触屏控制] 右上角点击: 暂停/恢复\n");
-        simple_video_toggle_pause();
+        extern bool simple_video_is_playing(void);
+        if (simple_video_is_playing()) {
+            simple_video_toggle_pause();
+        } else {
+            printf("[触屏控制] 视频已停止，无法暂停/恢复\n");
+        }
     } else {
         printf("[触屏控制] 点击位置不在控制区域内\n");
     }
@@ -132,10 +154,19 @@ static void handle_swipe(int start_x, int start_y, int end_x, int end_y) {
     printf("[触屏控制] 处理滑动: 从 (%d, %d) 到 (%d, %d), 偏移: (%d, %d)\n", 
            start_x, start_y, end_x, end_y, dx, dy);
     
-    // 只处理中间区域的滑动
-    if (!is_middle_area(start_x, start_y)) {
-        return;  // 不在中间区域，不处理滑动
+    // 对于垂直滑动（音量控制），放宽区域限制，只要滑动距离足够大就处理
+    // 这样可以支持从屏幕边缘开始滑动
+    bool is_vertical_swipe = (abs_dy > GESTURE_THRESHOLD && abs_dy > abs_dx * 2);
+    bool is_horizontal_swipe = (abs_dx > GESTURE_THRESHOLD && abs_dx > abs_dy * 2);
+    
+    // 水平滑动（速度控制）需要起点在中间区域
+    if (is_horizontal_swipe && !is_middle_area(start_x, start_y)) {
+        printf("[触屏控制] 水平滑动起点不在中间区域，忽略\n");
+        return;
     }
+    
+    // 垂直滑动（音量控制）只要滑动距离足够大就处理，不限制起点位置
+    // 这样可以支持从屏幕任何位置开始滑动来调节音量
     
     // 判断滑动方向（需要单向滑动，主要方向距离必须大于次要方向的2倍）
     if (abs_dx > GESTURE_THRESHOLD && abs_dx > abs_dy * 2) {
@@ -161,7 +192,8 @@ static void handle_swipe(int start_x, int start_y, int end_x, int end_y) {
             simple_video_volume_down();
         }
     } else {
-        printf("[触屏控制] 滑动距离不足或斜向滑动，忽略\n");
+        printf("[触屏控制] 滑动距离不足或斜向滑动，忽略 (abs_dx=%d, abs_dy=%d, threshold=%d)\n", 
+               abs_dx, abs_dy, GESTURE_THRESHOLD);
     }
 }
 
@@ -211,8 +243,9 @@ static void *control_thread_func(void *arg) {
     // 添加短暂延迟，等待用户释放手指（如果正在点击播放按钮）
     usleep(200000);  // 200ms延迟
     
-    // 检查视频是否还在播放，如果不在播放则退出
-    while (!should_exit_control && simple_video_is_playing()) {
+    // 循环处理触屏事件（即使视频播放结束，也继续运行以允许用户操作）
+    // 只有用户点击返回主页时才会退出
+    while (!should_exit_control) {
         // 读取输入事件（参考01touch.cpp）
         ret = read(touch_fd, &touch, sizeof(struct input_event));
         if (ret == -1) {
@@ -266,21 +299,16 @@ static void *control_thread_func(void *arg) {
                     
                     // 如果移动距离很小，认为是点击
                     if (abs(dx) < 10 && abs(dy) < 10) {
-                        // 检查视频是否还在播放，如果已停止则不处理
-                        if (simple_video_is_playing()) {
-                            handle_click(touch_start_x, touch_start_y);
-                        } else {
-                            printf("[触屏控制] 视频已停止，忽略触屏事件\n");
-                            should_exit_control = true;
-                        }
+                        // 无论视频是否在播放，都处理点击事件
+                        // 这样可以支持视频结束后切换视频或返回主页
+                        handle_click(touch_start_x, touch_start_y);
                     } else {
                         // 否则是滑动
-                        // 检查视频是否还在播放
+                        // 只有视频播放时才处理滑动事件（音量、速度控制）
                         if (simple_video_is_playing()) {
                             handle_swipe(touch_start_x, touch_start_y, touch_last_x, touch_last_y);
                         } else {
-                            printf("[触屏控制] 视频已停止，忽略滑动事件\n");
-                            should_exit_control = true;
+                            printf("[触屏控制] 视频已停止，忽略滑动事件（可点击左上角返回或左下/右下切换视频）\n");
                         }
                     }
                     
@@ -299,13 +327,6 @@ static void *control_thread_func(void *arg) {
         
         // 如果设置了退出标志，立即退出
         if (should_exit_control) {
-            break;
-        }
-        
-        // 再次检查视频播放状态
-        if (!simple_video_is_playing()) {
-            printf("[触屏控制] 检测到视频已停止，退出触屏控制线程\n");
-            should_exit_control = true;
             break;
         }
     }
