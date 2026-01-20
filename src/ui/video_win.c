@@ -219,16 +219,17 @@ void video_win_event_handler(lv_event_t *e) {
     }
     
     // 返回主屏幕（显示加载界面）
-    extern lv_obj_t *main_screen;
-    if (main_screen) {
+    extern lv_obj_t* get_main_page1_screen(void);
+    lv_obj_t *main_page_screen = get_main_page1_screen();
+    if (main_page_screen) {
         // 先确保主屏幕可见
-        lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(main_page_screen, LV_OBJ_FLAG_HIDDEN);
         // 切换到主屏幕
-        lv_scr_load(main_screen);
+        lv_scr_load(main_page_screen);
         lv_refr_now(NULL);
         
         // 创建加载界面（全屏遮挡层）
-        lv_obj_t *loading_screen = lv_obj_create(main_screen);
+        lv_obj_t *loading_screen = lv_obj_create(main_page_screen);
         lv_obj_set_size(loading_screen, LV_HOR_RES, LV_VER_RES);
         lv_obj_align(loading_screen, LV_ALIGN_TOP_LEFT, 0, 0);
         lv_obj_set_style_bg_color(loading_screen, lv_color_hex(0xf5f5f5), 0);

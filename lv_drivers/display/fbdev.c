@@ -170,20 +170,77 @@ void fbdev_exit(void)
  */
 void fbdev_flush(lv_disp_drv_t * drv, const lv_area_t * area, lv_color_t * color_p)
 {
+    // 检查触摸绘图模式是否激活，如果激活则跳过刷新（保留按钮和标题区域）
+    extern bool touch_draw_is_active(void);
+    bool touch_draw_active = touch_draw_is_active();
+    
+    // 创建局部变量来存储实际要刷新的区域（因为area是const的）
+    lv_area_t actual_area = *area;
+    
+    if (touch_draw_active) {
+        // 触摸绘图模式：只刷新工具栏区域，中间绘图区域跳过
+        // 顶部工具栏：y=0-59像素（整个宽度）
+        // 底部工具栏：y=400-479像素（整个宽度，480-80=400）
+        // 右侧工具栏：x=720-799像素，y=60-339像素（宽度80，高度280，800-80=720，60+280=340）
+        bool refresh_top = (area->y2 < 60);
+        bool refresh_bottom = (area->y1 >= 400);
+        bool refresh_right = (area->x1 >= 720 && area->y1 >= 60 && area->y2 < 340);  // 只刷新右侧工具栏实际显示区域
+        
+        if (!refresh_top && !refresh_bottom && !refresh_right) {
+            // 完全在中间绘图区域，跳过刷新
+            if (area->y1 >= 60 && area->y2 < 400 && area->x2 < 720) {
+                lv_disp_flush_ready(drv);
+                return;
+            }
+            // 如果在右侧但在工具栏显示区域之外（y < 60 或 y >= 340），也跳过刷新
+            if (area->x1 >= 720) {
+                lv_disp_flush_ready(drv);
+                return;
+            }
+        }
+        
+        // 区域跨越边界，只刷新工具栏部分
+        if (!refresh_top && area->y1 < 60 && area->y2 >= 60) {
+            // 跨越顶部边界，只刷新顶部部分
+            actual_area.y2 = 59;
+        }
+        if (!refresh_bottom && area->y1 < 400 && area->y2 >= 400) {
+            // 跨越底部边界，只刷新底部部分
+            actual_area.y1 = 400;
+        }
+        if (!refresh_right && area->x1 < 720 && area->x2 >= 720) {
+            // 跨越右侧边界，检查是否在工具栏显示区域内
+            if (area->y1 >= 60 && area->y2 < 340) {
+                // 在工具栏显示区域内，只刷新右侧部分
+                actual_area.x1 = 720;
+            } else {
+                // 不在工具栏显示区域内，跳过刷新
+                lv_disp_flush_ready(drv);
+                return;
+            }
+        }
+        // 处理右侧区域但不在工具栏显示范围内的情况
+        if (area->x1 >= 720 && (area->y2 < 60 || area->y1 >= 340)) {
+            // 在右侧但不在工具栏显示区域内，跳过刷新
+            lv_disp_flush_ready(drv);
+            return;
+        }
+    }
+    
     if(fbp == NULL ||
-            area->x2 < 0 ||
-            area->y2 < 0 ||
-            area->x1 > (int32_t)vinfo.xres - 1 ||
-            area->y1 > (int32_t)vinfo.yres - 1) {
+            actual_area.x2 < 0 ||
+            actual_area.y2 < 0 ||
+            actual_area.x1 > (int32_t)vinfo.xres - 1 ||
+            actual_area.y1 > (int32_t)vinfo.yres - 1) {
         lv_disp_flush_ready(drv);
         return;
     }
 
     /*Truncate the area to the screen*/
-    int32_t act_x1 = area->x1 < 0 ? 0 : area->x1;
-    int32_t act_y1 = area->y1 < 0 ? 0 : area->y1;
-    int32_t act_x2 = area->x2 > (int32_t)vinfo.xres - 1 ? (int32_t)vinfo.xres - 1 : area->x2;
-    int32_t act_y2 = area->y2 > (int32_t)vinfo.yres - 1 ? (int32_t)vinfo.yres - 1 : area->y2;
+    int32_t act_x1 = actual_area.x1 < 0 ? 0 : actual_area.x1;
+    int32_t act_y1 = actual_area.y1 < 0 ? 0 : actual_area.y1;
+    int32_t act_x2 = actual_area.x2 > (int32_t)vinfo.xres - 1 ? (int32_t)vinfo.xres - 1 : actual_area.x2;
+    int32_t act_y2 = actual_area.y2 > (int32_t)vinfo.yres - 1 ? (int32_t)vinfo.yres - 1 : actual_area.y2;
 
 
     lv_coord_t w = (act_x2 - act_x1 + 1);
@@ -236,7 +293,7 @@ void fbdev_flush(lv_disp_drv_t * drv, const lv_area_t * area, lv_color_t * color
                 color_p++;
             }
 
-            color_p += area->x2 - act_x2;
+            color_p += actual_area.x2 - act_x2;
         }
     } else {
         /*Not supported bit per pixel*/

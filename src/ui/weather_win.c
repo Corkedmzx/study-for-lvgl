@@ -19,9 +19,22 @@ extern const lv_font_t SourceHanSansSC_VF;
 
 // 返回事件处理函数（前向声明）
 static void weather_back_handler(lv_event_t *e);
+// 更新天气显示函数（前向声明）
+static void update_weather_display(lv_obj_t *cont);
 
 // 天气窗口独立屏幕（全局变量，供其他模块访问）
 lv_obj_t *weather_window = NULL;
+
+// 天气数据加载定时器
+static lv_timer_t *weather_load_timer = NULL;
+
+// 天气数据加载定时器回调（包装函数）
+static void weather_load_timer_cb(lv_timer_t *timer) {
+    lv_obj_t *cont = (lv_obj_t *)timer->user_data;
+    if (cont) {
+        update_weather_display(cont);
+    }
+}
 
 // 更新天气显示
 static void update_weather_display(lv_obj_t *cont) {
@@ -212,10 +225,11 @@ static void weather_back_handler(lv_event_t *e) {
     }
     
     // 恢复主屏幕显示
-    extern lv_obj_t *main_screen;
-    if (main_screen) {
-        lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
-        lv_scr_load(main_screen);
+    extern lv_obj_t* get_main_page1_screen(void);
+    lv_obj_t *main_page_screen = get_main_page1_screen();
+    if (main_page_screen) {
+        lv_obj_clear_flag(main_page_screen, LV_OBJ_FLAG_HIDDEN);
+        lv_scr_load(main_page_screen);
         lv_refr_now(NULL);  // 强制刷新显示
         usleep(100000);  // 等待100ms确保刷新完成
         lv_refr_now(NULL);  // 再次刷新
@@ -309,13 +323,19 @@ void show_weather_window(void) {
     lv_label_set_text(loading_label, "正在加载天气数据...");
     lv_obj_set_style_text_font(loading_label, &SourceHanSansSC_VF, 0);
     lv_obj_align(loading_label, LV_ALIGN_CENTER, 0, 0);
+    
+    // 切换到天气屏幕（先显示页面）
+    lv_scr_load(win);
     lv_refr_now(NULL);  // 立即刷新显示加载提示
     
-    // 更新天气显示（在后台线程或延迟执行）
-    update_weather_display(cont);
+    // 删除之前的定时器（如果存在）
+    if (weather_load_timer != NULL) {
+        lv_timer_del(weather_load_timer);
+        weather_load_timer = NULL;
+    }
     
-    // 切换到天气屏幕
-    lv_scr_load(win);
-    lv_refr_now(NULL);
+    // 创建定时器，延迟执行数据加载（100ms后执行，只执行一次）
+    weather_load_timer = lv_timer_create(weather_load_timer_cb, 100, cont);
+    lv_timer_set_repeat_count(weather_load_timer, 1);  // 只执行一次
 }
 

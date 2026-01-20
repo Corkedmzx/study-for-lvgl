@@ -80,11 +80,12 @@ int main(void)
             need_return_to_main = false;
             
             // 优化退出逻辑：使用内存映射快速刷新
-            extern lv_obj_t *main_screen;
+            extern lv_obj_t* get_main_page1_screen(void);
             extern lv_obj_t *video_screen;
             
-            // 验证main_screen是否有效
-            if (!main_screen) {
+            // 获取主页第一页screen
+            lv_obj_t *main_page_screen = get_main_page1_screen();
+            if (!main_page_screen) {
                 continue;
             }
             
@@ -93,9 +94,9 @@ int main(void)
                 lv_obj_add_flag(video_screen, LV_OBJ_FLAG_HIDDEN);
             }
             
-            // 直接切换到主屏幕
-            lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
-            lv_scr_load(main_screen);
+            // 直接切换到主屏幕第一页
+            lv_obj_clear_flag(main_page_screen, LV_OBJ_FLAG_HIDDEN);
+            lv_scr_load(main_page_screen);
             
             // 先处理几次定时器，确保LVGL完成渲染
             for (int i = 0; i < 10; i++) {

@@ -1124,10 +1124,11 @@ void game_2048_win_hide(void) {
     }
     
     // 切换到主屏幕（参考led_win_event_handler的实现）
-    extern lv_obj_t *main_screen;
-    if (main_screen) {
-        lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
-        lv_scr_load(main_screen);
+    extern lv_obj_t* get_main_page1_screen(void);
+    lv_obj_t *main_page_screen = get_main_page1_screen();
+    if (main_page_screen) {
+        lv_obj_clear_flag(main_page_screen, LV_OBJ_FLAG_HIDDEN);
+        lv_scr_load(main_page_screen);
         lv_refr_now(NULL);  // 强制刷新显示
     }
 }

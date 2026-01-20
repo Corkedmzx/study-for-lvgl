@@ -20,11 +20,11 @@
 
 
 
-#ifndef FA_SOLID_24
-#define FA_SOLID_24 1
+#ifndef FA_SOLID_900
+#define FA_SOLID_900 1
 #endif
 
-#if FA_SOLID_24
+#if FA_SOLID_900
 
 /*-----------------
  *    BITMAPS
@@ -40991,10 +40991,10 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
  *----------------*/
 
 /*Initialize a public general font descriptor*/
-#if LVGL_VERSION_MAJOR >= 8
-const lv_font_t fa_solid_24 = {
+#if LV_VERSION_CHECK(8, 0, 0)
+static const lv_font_t _FA_solid_900 = {
 #else
-lv_font_t fa_solid_24 = {
+static lv_font_t _FA_solid_900 = {
 #endif
     .get_glyph_dsc = lv_font_get_glyph_dsc_fmt_txt,    /*Function pointer to get glyph's data*/
     .get_glyph_bitmap = lv_font_get_bitmap_fmt_txt,    /*Function pointer to get glyph's bitmap*/
@@ -41007,15 +41007,14 @@ lv_font_t fa_solid_24 = {
     .underline_position = -2,
     .underline_thickness = 1,
 #endif
-    .dsc = &font_dsc,          /*The custom font data. Will be accessed by `get_glyph_bitmap/dsc` */
-#if LV_VERSION_CHECK(8, 2, 0) || LVGL_VERSION_MAJOR >= 9
-    .fallback = NULL,
-#endif
-#if LV_USE_USER_DATA
-    .user_data = NULL,
-#endif
+    .dsc = &font_dsc           /*The custom font data. Will be accessed by `get_glyph_bitmap/dsc` */
 };
 
+/* 公共字体变量：兼容代码中使用的变量名fa_solid_24 */
+#if LV_VERSION_CHECK(8, 0, 0)
+const lv_font_t fa_solid_24 = _FA_solid_900;
+#else
+lv_font_t fa_solid_24 = _FA_solid_900;
+#endif
 
-
-#endif /*#if FA_SOLID_24*/
+#endif /*#if FA_SOLID_900*/

@@ -16,9 +16,12 @@
 #include "../media_player/audio_player.h"
 #include "../media_player/simple_video_player.h"
 #include "../file_scanner/file_scanner.h"
+#include "../touch_draw/touch_draw.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <sys/time.h>
 #include "lvgl/lvgl.h"
 #include "lvgl/src/font/lv_font.h"
 #include "lvgl/src/font/lv_symbol_def.h"  // LVGL内置图标定义
@@ -63,6 +66,186 @@ static lv_obj_t* find_label_recursive(lv_obj_t *obj) {
     }
     
     return NULL;
+}
+
+// 页面切换相关变量
+static lv_obj_t *page1_screen = NULL;  // 第一页（独立screen）
+static lv_obj_t *page2_screen = NULL;  // 第二页（独立screen）
+static lv_obj_t *page1_dot1 = NULL;  // 第一页的第一个圆点
+static lv_obj_t *page1_dot2 = NULL;  // 第一页的第二个圆点
+static lv_obj_t *page2_dot1 = NULL;  // 第二页的第一个圆点
+static lv_obj_t *page2_dot2 = NULL;  // 第二页的第二个圆点
+static int current_page_index = 0;  // 当前页面索引（0或1）
+
+// 获取当前页面索引（供其他模块使用）
+int get_current_page_index(void) {
+    return current_page_index;
+}
+
+// 滑动检测参数
+#define SWIPE_THRESHOLD 80  // 最小滑动距离（像素）
+#define SWIPE_TIME_THRESHOLD 500000  // 最大滑动时间（微秒，500ms）
+
+// 触摸检测相关
+static bool touch_pressed = false;
+static int touch_start_x = 0;
+static int touch_start_y = 0;
+static struct timeval swipe_start_time;
+static struct timeval swipe_end_time;
+
+// 动画回调：设置X坐标
+static void anim_set_x_cb(void *var, int32_t value) {
+    lv_obj_t *obj = (lv_obj_t *)var;
+    lv_obj_set_x(obj, value);
+}
+
+// 页面切换动画完成回调
+static void page_switch_completed_cb(lv_anim_t *a) {
+    (void)a;
+    // 动画完成后，隐藏旧页面
+    if (current_page_index == 0) {
+        if (page2_screen) {
+            lv_obj_add_flag(page2_screen, LV_OBJ_FLAG_HIDDEN);
+        }
+    } else {
+        if (page1_screen) {
+            lv_obj_add_flag(page1_screen, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+// 更新圆点指示器（同时更新两个页面的圆点）
+static void update_page_indicators(int page_index) {
+    if (page_index == 0) {
+        // 第一页：第一个圆点高亮，第二个未选中
+        if (page1_dot1) lv_obj_set_style_bg_color(page1_dot1, lv_color_hex(0x2196F3), 0);
+        if (page1_dot2) lv_obj_set_style_bg_color(page1_dot2, lv_color_hex(0xCCCCCC), 0);
+        if (page2_dot1) lv_obj_set_style_bg_color(page2_dot1, lv_color_hex(0x2196F3), 0);
+        if (page2_dot2) lv_obj_set_style_bg_color(page2_dot2, lv_color_hex(0xCCCCCC), 0);
+    } else {
+        // 第二页：第一个未选中，第二个高亮
+        if (page1_dot1) lv_obj_set_style_bg_color(page1_dot1, lv_color_hex(0xCCCCCC), 0);
+        if (page1_dot2) lv_obj_set_style_bg_color(page1_dot2, lv_color_hex(0x2196F3), 0);
+        if (page2_dot1) lv_obj_set_style_bg_color(page2_dot1, lv_color_hex(0xCCCCCC), 0);
+        if (page2_dot2) lv_obj_set_style_bg_color(page2_dot2, lv_color_hex(0x2196F3), 0);
+    }
+}
+
+// 切换到指定页面（带动画）
+void switch_to_page(int target_page) {
+    if (target_page == current_page_index) {
+        return;  // 已经是目标页面
+    }
+    
+    lv_obj_t *old_screen = (current_page_index == 0) ? page1_screen : page2_screen;
+    lv_obj_t *new_screen = (target_page == 0) ? page1_screen : page2_screen;
+    
+    if (!old_screen || !new_screen) {
+        return;
+    }
+    
+    // 显示新页面
+    lv_obj_clear_flag(new_screen, LV_OBJ_FLAG_HIDDEN);
+    
+    // 设置初始位置
+    if (target_page == 0) {
+        // 切换到第一页：新页面从左侧滑入
+        lv_obj_set_x(new_screen, -800);
+        lv_obj_set_x(old_screen, 0);
+    } else {
+        // 切换到第二页：新页面从右侧滑入
+        lv_obj_set_x(new_screen, 800);
+        lv_obj_set_x(old_screen, 0);
+    }
+    
+    // 切换到新页面
+    lv_scr_load(new_screen);
+    
+    // 创建动画
+    lv_anim_t anim1, anim2;
+    
+    // 旧页面滑出
+    lv_anim_init(&anim1);
+    lv_anim_set_var(&anim1, old_screen);
+    lv_anim_set_values(&anim1, 0, (target_page == 0) ? 800 : -800);
+    lv_anim_set_time(&anim1, 300);
+    lv_anim_set_exec_cb(&anim1, anim_set_x_cb);
+    lv_anim_set_ready_cb(&anim1, page_switch_completed_cb);
+    lv_anim_start(&anim1);
+    
+    // 新页面滑入
+    lv_anim_init(&anim2);
+    lv_anim_set_var(&anim2, new_screen);
+    lv_anim_set_values(&anim2, (target_page == 0) ? -800 : 800, 0);
+    lv_anim_set_time(&anim2, 300);
+    lv_anim_set_exec_cb(&anim2, anim_set_x_cb);
+    lv_anim_start(&anim2);
+    
+    // 更新当前页面索引
+    current_page_index = target_page;
+    
+    // 更新圆点指示器
+    update_page_indicators(target_page);
+}
+
+// 主页触摸事件处理（检测左右滑动）
+static void main_screen_touch_event_handler(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_indev_t *indev = lv_indev_get_act();
+    
+    if (!indev) {
+        return;
+    }
+    
+    lv_point_t point;
+    lv_indev_get_point(indev, &point);
+    
+    if (code == LV_EVENT_PRESSED) {
+        // 按下
+        touch_pressed = true;
+        touch_start_x = point.x;
+        touch_start_y = point.y;
+        gettimeofday(&swipe_start_time, NULL);
+    } else if (code == LV_EVENT_RELEASED) {
+        // 释放
+        if (touch_pressed) {
+            int touch_end_x = point.x;
+            int touch_end_y = point.y;
+            gettimeofday(&swipe_end_time, NULL);
+            
+            // 计算滑动距离和时间
+            int dx = touch_end_x - touch_start_x;
+            int dy = touch_end_y - touch_start_y;
+            long duration = (swipe_end_time.tv_sec - swipe_start_time.tv_sec) * 1000000 + 
+                           (swipe_end_time.tv_usec - swipe_start_time.tv_usec);
+            
+            // 计算总滑动距离
+            float distance = sqrt(dx * dx + dy * dy);
+            
+            // 检测左右滑动
+            if (distance >= SWIPE_THRESHOLD && duration <= SWIPE_TIME_THRESHOLD) {
+                int abs_dx = abs(dx);
+                int abs_dy = abs(dy);
+                
+                // 判断是否为左右滑动（水平方向为主）
+                if (abs_dx > abs_dy) {
+                    if (dx > SWIPE_THRESHOLD) {
+                        // 向右滑动：切换到上一页（向左）
+                        if (current_page_index > 0) {
+                            switch_to_page(current_page_index - 1);
+                        }
+                    } else if (dx < -SWIPE_THRESHOLD) {
+                        // 向左滑动：切换到下一页（向右）
+                        if (current_page_index < 1) {
+                            switch_to_page(current_page_index + 1);
+                        }
+                    }
+                }
+            }
+            
+            touch_pressed = false;
+        }
+    }
 }
 
 /**
@@ -125,43 +308,54 @@ static lv_obj_t* create_icon_button(lv_obj_t *parent, const char *icon, const ch
     return btn;
 }
 
-void create_main_screen(void) {
-    main_screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_opa(main_screen, LV_OPA_TRANSP, 0);  // 设置背景透明，让背景图显示
-    lv_obj_set_style_border_opa(main_screen, LV_OPA_TRANSP, 0);
+// 创建单个页面的辅助函数
+static lv_obj_t* create_page_screen(const char *bg_image) {
+    lv_obj_t *page = lv_obj_create(NULL);
+    lv_obj_set_size(page, 800, 480);
+    lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_opa(page, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
     
-    // 创建背景图canvas（全屏）
-    // 使用固定大小避免编译错误（800x480，32位色深）
-    #define MAIN_BG_CANVAS_WIDTH 800
-    #define MAIN_BG_CANVAS_HEIGHT 480
-    #define MAIN_BG_IMAGE "/mdata/index.bmp"
-    static lv_color_t main_bg_buf[LV_CANVAS_BUF_SIZE_TRUE_COLOR(MAIN_BG_CANVAS_WIDTH, MAIN_BG_CANVAS_HEIGHT)];
-    lv_obj_t *main_bg_canvas = lv_canvas_create(main_screen);
-    lv_canvas_set_buffer(main_bg_canvas, main_bg_buf, MAIN_BG_CANVAS_WIDTH, MAIN_BG_CANVAS_HEIGHT, LV_IMG_CF_TRUE_COLOR);
-    lv_obj_align(main_bg_canvas, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_move_background(main_bg_canvas);  // 移到最底层
+    // 创建背景图canvas
+    #define PAGE_BG_WIDTH 800
+    #define PAGE_BG_HEIGHT 480
+    static lv_color_t page_bg_buf[LV_CANVAS_BUF_SIZE_TRUE_COLOR(PAGE_BG_WIDTH, PAGE_BG_HEIGHT)];
+    lv_obj_t *page_bg_canvas = lv_canvas_create(page);
+    lv_canvas_set_buffer(page_bg_canvas, page_bg_buf, PAGE_BG_WIDTH, PAGE_BG_HEIGHT, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_align(page_bg_canvas, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_move_background(page_bg_canvas);
     
     // 加载背景图
-    if (load_bmp_to_canvas(main_bg_canvas, MAIN_BG_IMAGE) != 0) {
+    extern int load_bmp_to_canvas(lv_obj_t *canvas, const char *file_path);
+    if (load_bmp_to_canvas(page_bg_canvas, bg_image) != 0) {
         printf("[主页] 背景图加载失败，使用默认背景色\n");
-        lv_canvas_fill_bg(main_bg_canvas, lv_color_hex(0xf5f5f5), LV_OPA_COVER);
+        lv_canvas_fill_bg(page_bg_canvas, lv_color_hex(0xf5f5f5), LV_OPA_COVER);
     } else {
-        printf("[主页] 背景图加载成功: %s\n", MAIN_BG_IMAGE);
+        printf("[主页] 背景图加载成功: %s\n", bg_image);
     }
     
-    /* 创建标题 */
-    lv_obj_t *title = lv_label_create(main_screen);
-    lv_label_set_text(title, "LVGL多媒体系统");
-    lv_obj_set_style_text_font(title, &SourceHanSansSC_VF, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
+    return page;
+}
+
+void create_main_screen(void) {
+    main_screen = lv_obj_create(NULL);
+    lv_obj_set_size(main_screen, 800, 480);
+    lv_obj_set_style_bg_opa(main_screen, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_opa(main_screen, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_SCROLLABLE);
     
-    /* 九宫格布局参数 */
-    const int btn_width = 220;      // 按钮宽度（增大）
-    const int btn_height = 120;      // 按钮高度（增大）
-    const int btn_spacing = 20;      // 按钮间距
-    const int start_x = 40;          // 起始X坐标
-    const int start_y = 60;          // 起始Y坐标
+    // 创建第一页（独立screen）
+    #define MAIN_BG_IMAGE "/mdata/index.bmp"
+    page1_screen = create_page_screen(MAIN_BG_IMAGE);
+    
+    /* 九宫格布局参数 - 计算居中位置，确保整齐排列 */
+    const int btn_width = 220;
+    const int btn_height = 120;
+    const int btn_spacing = 20;
+    const int total_width = btn_width * 3 + btn_spacing * 2;
+    const int total_height = btn_height * 3 + btn_spacing * 2;
+    const int start_x = (800 - total_width) / 2;  // 水平居中
+    const int start_y = (450 - total_height) / 2;  // 垂直居中（留出底部30px给圆点）
     
     // 计算每行每列的位置
     int col1_x = start_x;
@@ -173,61 +367,140 @@ void create_main_screen(void) {
     int row3_y = start_y + (btn_height + btn_spacing) * 2;
     
     /* 第一行：相册、视频、音乐 */
-    // 相册按钮（左上）- 使用图片图标
-    lv_obj_t *album_btn = create_icon_button(main_screen, LV_SYMBOL_IMAGE, "相册", 
+    lv_obj_t *album_btn = create_icon_button(page1_screen, LV_SYMBOL_IMAGE, "相册", 
                                              col1_x, row1_y, btn_width, btn_height,
                                              lv_color_hex(0x4CAF50), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(album_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
     
-    // 视频按钮（中上）- 使用视频图标
-    lv_obj_t *video_btn = create_icon_button(main_screen, LV_SYMBOL_VIDEO, "视频", 
+    lv_obj_t *video_btn = create_icon_button(page1_screen, LV_SYMBOL_VIDEO, "视频", 
                                              col2_x, row1_y, btn_width, btn_height,
                                              lv_color_hex(0x2196F3), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(video_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
     
-    // 音乐按钮（右上）- 使用音频图标
-    lv_obj_t *music_btn = create_icon_button(main_screen, LV_SYMBOL_AUDIO, "音乐", 
+    lv_obj_t *music_btn = create_icon_button(page1_screen, LV_SYMBOL_AUDIO, "音乐", 
                                              col3_x, row1_y, btn_width, btn_height,
                                              lv_color_hex(0x9C27B0), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(music_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
     
     /* 第二行：LED控制、天气、计时器 */
-    // LED控制按钮（左中）- 使用小灯泡图标（FontAwesome）
-    lv_obj_t *led_btn = create_icon_button(main_screen, CUSTOM_SYMBOL_LIGHTBULB, "LED控制", 
+    lv_obj_t *led_btn = create_icon_button(page1_screen, CUSTOM_SYMBOL_LIGHTBULB, "LED控制", 
                                            col1_x, row2_y, btn_width, btn_height,
                                            lv_color_hex(0xFF9800), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(led_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
     
-    // 天气按钮（中中）- 使用太阳图标（FontAwesome）
-    lv_obj_t *weather_btn = create_icon_button(main_screen, CUSTOM_SYMBOL_SUN, "天气", 
+    lv_obj_t *weather_btn = create_icon_button(page1_screen, CUSTOM_SYMBOL_SUN, "天气", 
                                                 col2_x, row2_y, btn_width, btn_height,
                                                 lv_color_hex(0xFFC107), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(weather_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
     
-    // 计时器按钮（右中）- 使用铃铛图标（代表提醒/计时）
-    lv_obj_t *timer_btn = create_icon_button(main_screen, LV_SYMBOL_BELL, "计时器", 
+    lv_obj_t *timer_btn = create_icon_button(page1_screen, LV_SYMBOL_BELL, "计时器", 
                                              col3_x, row2_y, btn_width, btn_height,
                                              lv_color_hex(0x00BCD4), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(timer_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
     
     /* 第三行：时钟、2048、退出 */
-    // 时钟按钮（左下）- 使用钟面图标（FontAwesome）
-    lv_obj_t *clock_btn = create_icon_button(main_screen, CUSTOM_SYMBOL_CLOCK, "时钟", 
+    lv_obj_t *clock_btn = create_icon_button(page1_screen, CUSTOM_SYMBOL_CLOCK, "时钟", 
                                              col1_x, row3_y, btn_width, btn_height,
                                              lv_color_hex(0x607D8B), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(clock_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
     
-    // 2048游戏按钮（中下）- 使用游戏手柄图标（FontAwesome）
-    lv_obj_t *game2048_btn = create_icon_button(main_screen, CUSTOM_SYMBOL_GAMEPAD, "2048", 
+    lv_obj_t *game2048_btn = create_icon_button(page1_screen, CUSTOM_SYMBOL_GAMEPAD, "2048", 
                                                  col2_x, row3_y, btn_width, btn_height,
                                                  lv_color_hex(0xE91E63), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(game2048_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
     
-    // 退出按钮（右下，红色）- 使用关闭图标
-    lv_obj_t *exit_btn = create_icon_button(main_screen, LV_SYMBOL_CLOSE, "退出", 
+    lv_obj_t *exit_btn = create_icon_button(page1_screen, LV_SYMBOL_CLOSE, "退出", 
                                              col3_x, row3_y, btn_width, btn_height,
                                              lv_color_hex(0xF44336), lv_color_hex(0xFFFFFF));
     lv_obj_add_event_cb(exit_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
+    
+    // 添加触摸事件处理
+    lv_obj_add_event_cb(page1_screen, main_screen_touch_event_handler, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(page1_screen, main_screen_touch_event_handler, LV_EVENT_RELEASED, NULL);
+    
+    /* 创建第二页（触摸绘图功能） */
+    page2_screen = create_page_screen(MAIN_BG_IMAGE);
+    
+    // 触摸绘图按钮（居中显示）
+    lv_obj_t *touch_draw_btn = create_icon_button(page2_screen, LV_SYMBOL_EDIT, "触摸绘图", 
+                                                   290, 180, 220, 120,
+                                                   lv_color_hex(0xFF5722), lv_color_hex(0xFFFFFF));
+    lv_obj_add_event_cb(touch_draw_btn, main_window_event_handler, LV_EVENT_CLICKED, NULL);
+    
+    // 添加触摸事件处理
+    lv_obj_add_event_cb(page2_screen, main_screen_touch_event_handler, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(page2_screen, main_screen_touch_event_handler, LV_EVENT_RELEASED, NULL);
+    
+    // 初始隐藏第二页
+    lv_obj_add_flag(page2_screen, LV_OBJ_FLAG_HIDDEN);
+    
+    /* 创建圆点指示器容器（在每个page screen上，底部居中） */
+    // 第一页的圆点指示器
+    lv_obj_t *indicator_container1 = lv_obj_create(page1_screen);
+    lv_obj_set_size(indicator_container1, 100, 30);
+    lv_obj_align(indicator_container1, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_set_style_bg_opa(indicator_container1, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_opa(indicator_container1, LV_OPA_TRANSP, 0);
+    lv_obj_set_flex_flow(indicator_container1, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(indicator_container1, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(indicator_container1, 15, 0);
+    lv_obj_clear_flag(indicator_container1, LV_OBJ_FLAG_SCROLLABLE);
+    
+    page1_dot1 = lv_obj_create(indicator_container1);
+    lv_obj_set_size(page1_dot1, 12, 12);
+    lv_obj_set_style_radius(page1_dot1, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(page1_dot1, lv_color_hex(0x2196F3), 0);  // 高亮（第一页）
+    lv_obj_set_style_border_width(page1_dot1, 0, 0);
+    
+    page1_dot2 = lv_obj_create(indicator_container1);
+    lv_obj_set_size(page1_dot2, 12, 12);
+    lv_obj_set_style_radius(page1_dot2, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(page1_dot2, lv_color_hex(0xCCCCCC), 0);  // 未选中（第二页）
+    lv_obj_set_style_border_width(page1_dot2, 0, 0);
+    
+    // 第二页的圆点指示器
+    lv_obj_t *indicator_container2 = lv_obj_create(page2_screen);
+    lv_obj_set_size(indicator_container2, 100, 30);
+    lv_obj_align(indicator_container2, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_set_style_bg_opa(indicator_container2, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_opa(indicator_container2, LV_OPA_TRANSP, 0);
+    lv_obj_set_flex_flow(indicator_container2, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(indicator_container2, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(indicator_container2, 15, 0);
+    lv_obj_clear_flag(indicator_container2, LV_OBJ_FLAG_SCROLLABLE);
+    
+    page2_dot1 = lv_obj_create(indicator_container2);
+    lv_obj_set_size(page2_dot1, 12, 12);
+    lv_obj_set_style_radius(page2_dot1, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(page2_dot1, lv_color_hex(0xCCCCCC), 0);  // 未选中（第一页）
+    lv_obj_set_style_border_width(page2_dot1, 0, 0);
+    
+    page2_dot2 = lv_obj_create(indicator_container2);
+    lv_obj_set_size(page2_dot2, 12, 12);
+    lv_obj_set_style_radius(page2_dot2, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(page2_dot2, lv_color_hex(0x2196F3), 0);  // 高亮（第二页）
+    lv_obj_set_style_border_width(page2_dot2, 0, 0);
+    
+    // 初始化当前页面
+    current_page_index = 0;
+    update_page_indicators(0);
+    
+    // 切换到第一页
+    lv_scr_load(page1_screen);
+}
+
+/**
+ * @brief 获取主页第一页screen（用于密码锁切换）
+ */
+lv_obj_t* get_main_page1_screen(void) {
+    return page1_screen;
+}
+
+/**
+ * @brief 获取主页第二页screen
+ */
+lv_obj_t* get_main_page2_screen(void) {
+    return page2_screen;
 }
 
 /**
@@ -668,12 +941,13 @@ void back_to_main_cb(lv_event_t * e) {
         lv_obj_add_flag(weather_window, LV_OBJ_FLAG_HIDDEN);
     }
     
-    // 恢复主屏幕
-    if (main_screen) {
-        // 先确保主屏幕可见
-        lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
-        // 切换到主屏幕
-        lv_scr_load(main_screen);
+    // 恢复主屏幕（切换到第一页）
+    if (page1_screen) {
+        if (current_page_index != 0) {
+            switch_to_page(0);
+        } else {
+            lv_scr_load(page1_screen);
+        }
         
         // 使用快速刷新函数强制刷新整个屏幕
         extern void fast_refresh_main_screen(void);
@@ -717,9 +991,7 @@ void main_window_event_handler(lv_event_t *e) {
     }
     
     // 确保主屏幕显示（在点击按钮时）
-    if (main_screen) {
-        lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
-    }
+    // 注意：这里不需要切换screen，因为按钮已经在page1_screen或page2_screen上了
     
     lv_obj_t *btn = lv_event_get_target(e);
     
@@ -791,6 +1063,8 @@ void main_window_event_handler(lv_event_t *e) {
     } else if(strcmp(text, "2048") == 0) {
         extern void game_2048_win_show(void);
         game_2048_win_show();
+    } else if(strcmp(text, "触摸绘图") == 0) {
+        touch_draw_win_show();
     } else if(strcmp(text, "退出") == 0) {
         exit_application();
     }

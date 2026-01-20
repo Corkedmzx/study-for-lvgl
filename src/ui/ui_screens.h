@@ -15,6 +15,26 @@
 void create_main_screen(void);
 
 /**
+ * @brief 获取主页第一页screen（用于密码锁切换）
+ */
+lv_obj_t* get_main_page1_screen(void);
+
+/**
+ * @brief 获取主页第二页screen
+ */
+lv_obj_t* get_main_page2_screen(void);
+
+/**
+ * @brief 获取当前页面索引（0或1）
+ */
+int get_current_page_index(void);
+
+/**
+ * @brief 切换到指定页面（带动画）
+ */
+void switch_to_page(int target_page);
+
+/**
  * @brief 创建图片展示屏幕
  */
 void create_image_screen(void);

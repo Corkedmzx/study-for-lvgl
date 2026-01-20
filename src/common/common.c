@@ -53,7 +53,14 @@ bool need_update_2048_display = false;
  */
 void fast_refresh_main_screen(void) {
     lv_disp_t *disp = lv_disp_get_default();
-    if (!disp || !main_screen) {
+    if (!disp) {
+        return;
+    }
+    
+    // 获取当前显示的页面screen
+    extern lv_obj_t* get_main_page1_screen(void);
+    lv_obj_t *current_page = get_main_page1_screen();
+    if (!current_page) {
         return;
     }
     
@@ -62,7 +69,7 @@ void fast_refresh_main_screen(void) {
     bool video_playing = simple_video_is_playing();
     
     // 1. 先让LVGL渲染整个屏幕（使所有对象无效化）
-    lv_obj_invalidate(main_screen);
+    lv_obj_invalidate(current_page);
     
     // 2. 处理定时器，让LVGL完成渲染（减少循环次数）
     for (int i = 0; i < 20; i++) {  // 从50次减少到20次
@@ -110,27 +117,26 @@ void fast_refresh_main_screen(void) {
  * 使所有子对象无效化并重新渲染，确保按钮背景和文字不透明，恢复文字颜色
  */
 void force_refresh_main_buttons(void) {
-    if (!main_screen) {
+    // 获取当前显示的页面screen
+    extern lv_obj_t* get_main_page1_screen(void);
+    lv_obj_t *current_page = get_main_page1_screen();
+    if (!current_page) {
         return;
     }
     
-    // 确保主屏幕背景不透明
-    lv_obj_set_style_bg_opa(main_screen, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(main_screen, lv_color_hex(0xf0f0f0), 0);
-    
     // 使主屏幕及其所有子对象无效化（直接操作，不使用lv_obj_is_valid）
-    lv_obj_invalidate(main_screen);
+    lv_obj_invalidate(current_page);
     
     // 递归使所有子对象无效化，并确保背景和文字不透明，恢复颜色（只检查NULL，不使用lv_obj_is_valid）
-    uint32_t child_cnt = lv_obj_get_child_cnt(main_screen);
+    uint32_t child_cnt = lv_obj_get_child_cnt(current_page);
     for (uint32_t i = 0; i < child_cnt; i++) {
-        // 每次循环都检查main_screen是否为NULL
-        if (!main_screen) {
-            printf("[刷新] 警告: main_screen在刷新过程中变为NULL\n");
+        // 每次循环都检查current_page是否为NULL
+        if (!current_page) {
+            printf("[刷新] 警告: current_page在刷新过程中变为NULL\n");
             break;
         }
         
-        lv_obj_t *child = lv_obj_get_child(main_screen, i);
+        lv_obj_t *child = lv_obj_get_child(current_page, i);
         if (child) {
             // 确保子对象背景不透明
             lv_obj_set_style_bg_opa(child, LV_OPA_COVER, 0);
@@ -175,9 +181,9 @@ void force_refresh_main_buttons(void) {
     
     // 多次处理定时器，确保所有对象重新渲染
     for (int i = 0; i < 100; i++) {  // 100次
-        // 每次循环都检查main_screen是否为NULL
-        if (!main_screen) {
-            printf("[刷新] 警告: main_screen在定时器处理过程中变为NULL\n");
+        // 每次循环都检查current_page是否为NULL
+        if (!current_page) {
+            printf("[刷新] 警告: current_page在定时器处理过程中变为NULL\n");
             break;
         }
         lv_timer_handler();
@@ -185,10 +191,10 @@ void force_refresh_main_buttons(void) {
     }
     
     // 最终检查后强制刷新
-    if (main_screen) {
+    if (current_page) {
         lv_refr_now(NULL);
         // 再次确保主屏幕在最上层
-        lv_scr_load(main_screen);
+        lv_scr_load(current_page);
         lv_timer_handler();
         lv_refr_now(NULL);
     }

@@ -162,12 +162,13 @@ void music_win_event_handler(lv_event_t *e) {
             music_win = NULL;
         }
         
-        extern lv_obj_t *main_screen;
-        if (main_screen) {
+        extern lv_obj_t* get_main_page1_screen(void);
+        lv_obj_t *main_page_screen = get_main_page1_screen();
+        if (main_page_screen) {
             // 确保主屏幕可见
-            lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(main_page_screen, LV_OBJ_FLAG_HIDDEN);
             // 切换到主屏幕
-            lv_scr_load(main_screen);
+            lv_scr_load(main_page_screen);
             
             // 使用快速刷新函数强制刷新整个屏幕
             extern void fast_refresh_main_screen(void);

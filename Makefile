@@ -50,7 +50,8 @@ CSRCS += src/ui/timer_win.c
 CSRCS += src/ui/screensaver_win.c
 CSRCS += src/ui/clock_win.c
 CSRCS += src/ui/game_2048_win.c
-CSRCS += src/game_2048/game_2048.c 
+CSRCS += src/game_2048/game_2048.c
+CSRCS += src/touch_draw/touch_draw.c 
 
 OBJEXT ?= .o
 

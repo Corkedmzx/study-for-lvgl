@@ -594,8 +594,10 @@ void login_win_check_show_main(void) {
     
     need_show_main_screen = false;
     
-    extern lv_obj_t *main_screen;
-    if (!main_screen) {
+    // 获取主页第一页screen
+    extern lv_obj_t* get_main_page1_screen(void);
+    lv_obj_t *main_page_screen = get_main_page1_screen();
+    if (!main_page_screen) {
         printf("[密码锁] 错误：主屏幕未初始化\n");
         return;
     }
@@ -609,9 +611,9 @@ void login_win_check_show_main(void) {
     
     // 切换到主屏幕（使用滑动动画）
     lv_obj_set_y(login_screen, 0);
-    lv_obj_set_y(main_screen, 480);  // 使用固定值
-    lv_obj_clear_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
-    lv_scr_load(main_screen);
+    lv_obj_set_y(main_page_screen, 480);  // 使用固定值
+    lv_obj_clear_flag(main_page_screen, LV_OBJ_FLAG_HIDDEN);
+    lv_scr_load(main_page_screen);
     
     // 创建动画：密码锁向上滑出，主页从下往上滑入
     lv_anim_t anim1, anim2;
@@ -626,7 +628,7 @@ void login_win_check_show_main(void) {
     
     // 主页从下往上滑入
     lv_anim_init(&anim2);
-    lv_anim_set_var(&anim2, main_screen);
+    lv_anim_set_var(&anim2, main_page_screen);
     lv_anim_set_values(&anim2, 480, 0);
     lv_anim_set_time(&anim2, 300);
     lv_anim_set_exec_cb(&anim2, anim_set_y_cb);
