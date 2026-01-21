@@ -14,6 +14,7 @@
 #include "lvgl/lvgl.h"
 #include "lvgl/src/widgets/lv_label.h"
 #include "../media_player/simple_video_player.h"  // for simple_video_is_playing
+#include <stdio.h>
 
 // 全局变量定义
 lv_obj_t *main_screen = NULL;

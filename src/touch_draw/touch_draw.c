@@ -9,6 +9,7 @@
 #include "touch_draw.h"
 #include "../common/common.h"
 #include "../common/touch_device.h"
+#include "../collaborative_draw/collaborative_draw.h"
 #include "lvgl/src/font/lv_font.h"
 #include "lvgl/src/font/lv_symbol_def.h"
 #include <stdio.h>
@@ -26,6 +27,7 @@
 #include <signal.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <time.h>
 
 // 设备路径
 #define TOUCH_DEVICE "/dev/input/event0"
@@ -131,6 +133,7 @@ static int touch_max_y = 600;
 static int pen_size = 2;  // 笔触大小：1=细，2=中，3=粗
 static int current_color_index = 0;  // 当前颜色索引
 static bool eraser_mode = false;  // 橡皮擦模式
+static bool collaborative_mode = true;  // 协作绘图模式（默认启用）
 static uint32_t color_list[] = {
     COLOR_RED_BGRA,
     COLOR_GREEN_BGRA,
@@ -217,36 +220,503 @@ static void draw_line(struct FramebufferInfo* fb, int x0, int y0, int x1, int y1
     }
 }
 
+// 协作绘图按钮对象（用于定时器更新UI）
+static lv_obj_t *collab_connect_btn = NULL;      // 连接协作按钮（主机）
+static lv_obj_t *collab_join_btn = NULL;         // 加入协作按钮（客机）
+static lv_obj_t *collab_end_btn = NULL;          // 结束协作按钮
+static lv_obj_t *back_btn = NULL;                 // 返回按钮
+static lv_timer_t *collab_status_check_timer = NULL;
+
+// 前向声明
+static void remote_draw_callback(uint16_t x, uint16_t y, uint16_t prev_x, uint16_t prev_y,
+                                 uint8_t pen_size, uint32_t color, bool is_eraser, void *user_data);
+
+// 协作模式状态
+static bool is_host_mode = false;  // 是否是主机模式（开启协作）
+static bool is_guest_mode = false; // 是否是客机模式（加入协作）
+
+// 连接线程ID（用于检查线程状态）
+static pthread_t connect_thread = 0;
+static pthread_t join_thread = 0;
+
+// 检查协作连接状态的定时器回调
+static void collab_status_check_timer_cb(lv_timer_t *t) {
+    collaborative_draw_state_t state = collaborative_draw_get_state();
+    
+    if (is_host_mode && collab_connect_btn) {
+        // 主机模式
+        lv_obj_t *label = lv_obj_get_child(collab_connect_btn, 0);
+        
+        if (state == COLLAB_DRAW_STATE_CONNECTED) {
+            lv_label_set_text(label, "已连接");
+            lv_obj_set_style_bg_color(collab_connect_btn, lv_color_hex(0x4CAF50), 0);  // 绿色
+            // 显示结束协作按钮
+            if (collab_end_btn) {
+                lv_obj_clear_flag(collab_end_btn, LV_OBJ_FLAG_HIDDEN);
+            }
+            // 重置线程ID（连接成功，线程已退出）
+            connect_thread = 0;
+            lv_timer_del(t);
+            collab_status_check_timer = NULL;
+        } else if (state == COLLAB_DRAW_STATE_ERROR || state == COLLAB_DRAW_STATE_DISCONNECTED) {
+            lv_label_set_text(label, "连接失败");
+            lv_obj_set_style_bg_color(collab_connect_btn, lv_color_hex(0xF44336), 0);  // 红色
+            is_host_mode = false;
+            // 重置线程ID（连接失败，线程已退出）
+            connect_thread = 0;
+            lv_timer_del(t);
+            collab_status_check_timer = NULL;
+        } else if (t->repeat_count++ > 100) {  // 100 * 100ms = 10秒超时
+            lv_label_set_text(label, "连接超时");
+            lv_obj_set_style_bg_color(collab_connect_btn, lv_color_hex(0xF44336), 0);
+            is_host_mode = false;
+            // 重置线程ID（超时，线程可能仍在运行，但允许重新连接）
+            connect_thread = 0;
+            lv_timer_del(t);
+            collab_status_check_timer = NULL;
+        }
+    } else if (is_guest_mode && collab_join_btn) {
+        // 客机模式
+        lv_obj_t *label = lv_obj_get_child(collab_join_btn, 0);
+        
+        if (state == COLLAB_DRAW_STATE_CONNECTED) {
+            lv_label_set_text(label, "已加入");
+            lv_obj_set_style_bg_color(collab_join_btn, lv_color_hex(0x4CAF50), 0);  // 绿色
+            // 显示结束协作按钮
+            if (collab_end_btn) {
+                lv_obj_clear_flag(collab_end_btn, LV_OBJ_FLAG_HIDDEN);
+            }
+            // 连接成功，线程已退出，重置线程ID
+            join_thread = 0;
+            lv_timer_del(t);
+            collab_status_check_timer = NULL;
+        } else if (state == COLLAB_DRAW_STATE_ERROR || state == COLLAB_DRAW_STATE_DISCONNECTED) {
+            lv_label_set_text(label, "加入失败");
+            lv_obj_set_style_bg_color(collab_join_btn, lv_color_hex(0xF44336), 0);  // 红色
+            is_guest_mode = false;
+            // 连接失败，重置线程ID（线程可能还在运行，但连接已失败）
+            join_thread = 0;
+            lv_timer_del(t);
+            collab_status_check_timer = NULL;
+        } else if (t->repeat_count++ > 100) {  // 100 * 100ms = 10秒超时
+            lv_label_set_text(label, "搜索超时");
+            lv_obj_set_style_bg_color(collab_join_btn, lv_color_hex(0xF44336), 0);
+            is_guest_mode = false;
+            // 连接超时，重置线程ID（允许重新连接）
+            join_thread = 0;
+            lv_timer_del(t);
+            collab_status_check_timer = NULL;
+        }
+    } else {
+        // 没有活动的按钮，删除定时器
+        lv_timer_del(t);
+        collab_status_check_timer = NULL;
+    }
+}
+
+// 协作绘图连接线程函数（在后台线程中执行，避免UI卡顿）
+static void* collaborative_connect_thread_func(void *arg) {
+    pthread_t *thread_id_ptr = (pthread_t *)arg;
+    
+    // 在后台线程中执行连接（避免UI卡顿）
+    int ret = collaborative_draw_start();
+    
+    // 连接完成后，重置线程ID
+    if (thread_id_ptr) {
+        *thread_id_ptr = 0;
+    }
+    
+    return NULL;
+}
+
+// 协作绘图连接按钮回调（作为主机开启协作）
+static void collaborative_connect_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
+        return;
+    }
+    
+    lv_obj_t *btn = lv_event_get_target(e);
+    lv_obj_t *label = lv_obj_get_child(btn, 0);
+    collaborative_draw_state_t state = collaborative_draw_get_state();
+    
+    // 如果正在连接中，忽略点击（防止重复点击导致连接中断）
+    if (state == COLLAB_DRAW_STATE_CONNECTING) {
+        printf("[触摸绘图] 连接正在进行中，忽略重复点击\n");
+        return;
+    }
+    
+    // 如果协作模块未初始化，先初始化（可能在退出后重新进入）
+    if (!collaborative_mode) {
+        collaborative_draw_config_t collab_config = {0};
+        collab_config.enabled = true;
+        strncpy(collab_config.server_host, "bemfa.com",
+                sizeof(collab_config.server_host) - 1);
+        collab_config.server_port = 8344;
+        collab_config.user_id = (uint32_t)time(NULL) % 1000000;
+        strncpy(collab_config.room_id, "default_room", sizeof(collab_config.room_id) - 1);
+        strncpy(collab_config.device_name, "GEC6818",  // TODO: 请替换为您的设备名称
+                sizeof(collab_config.device_name) - 1);
+        strncpy(collab_config.private_key, "your_password",  // TODO: 请替换为您的巴法云私钥
+                sizeof(collab_config.private_key) - 1);
+        
+        if (collaborative_draw_init(&collab_config) == 0) {
+            collaborative_draw_set_remote_draw_callback(remote_draw_callback, NULL);
+            collaborative_mode = true;
+            printf("[触摸绘图] 协作绘图模块已重新初始化\n");
+        } else {
+            printf("[触摸绘图] 协作绘图模块初始化失败\n");
+            return;
+        }
+    }
+    
+    // 如果已经是客机模式，先退出
+    if (is_guest_mode) {
+        collaborative_draw_stop();
+        is_guest_mode = false;
+    }
+    
+    if (collaborative_mode && state != COLLAB_DRAW_STATE_CONNECTED) {
+        // 停止之前的检查定时器
+        if (collab_status_check_timer) {
+            lv_timer_del(collab_status_check_timer);
+            collab_status_check_timer = NULL;
+        }
+        
+        // 如果之前的连接线程还在运行，等待它退出
+        if (connect_thread != 0) {
+            int ret = pthread_kill(connect_thread, 0);
+            if (ret == 0) {
+                // 线程还在运行，等待其退出（最多等待1秒）
+                printf("[触摸绘图] 等待之前的连接线程退出...\n");
+                for (int i = 0; i < 10; i++) {
+                    usleep(100000);  // 100ms
+                    ret = pthread_kill(connect_thread, 0);
+                    if (ret != 0) {
+                        // 线程已退出
+                        break;
+                    }
+                }
+                if (ret == 0) {
+                    // 线程仍在运行，强制重置（可能是卡住了）
+                    printf("[触摸绘图] 连接线程超时，强制重置\n");
+                }
+            }
+            // 重置线程ID（无论线程是否还在运行）
+            connect_thread = 0;
+        }
+        
+        // 确保之前的状态已清理
+        if (state == COLLAB_DRAW_STATE_DISCONNECTED || state == COLLAB_DRAW_STATE_ERROR) {
+            collaborative_draw_stop();
+            collaborative_draw_cleanup();
+            // 等待一下确保资源释放
+            usleep(50000);  // 50ms
+        }
+        
+        // 启动协作绘图连接（作为主机，在后台线程中执行，避免UI卡顿）
+        is_host_mode = true;
+        lv_label_set_text(label, "连接中...");
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0xFFA500), 0);  // 橙色
+        collab_connect_btn = btn;
+        
+        // 更新其他按钮状态
+        if (collab_join_btn) {
+            lv_obj_set_style_bg_color(collab_join_btn, lv_color_hex(0x9E9E9E), 0);
+        }
+        if (collab_end_btn) {
+            lv_obj_add_flag(collab_end_btn, LV_OBJ_FLAG_HIDDEN);
+        }
+        
+        // 在后台线程中执行连接（传递线程ID指针，以便线程退出时重置）
+        if (pthread_create(&connect_thread, NULL, collaborative_connect_thread_func, &connect_thread) != 0) {
+            printf("[触摸绘图] 创建连接线程失败\n");
+            lv_label_set_text(label, "连接失败");
+            lv_obj_set_style_bg_color(btn, lv_color_hex(0xF44336), 0);  // 红色
+            is_host_mode = false;
+            connect_thread = 0;
+            return;
+        }
+        // 不detach，让线程自然退出后可以被join
+        
+        // 使用定时器检查连接状态并更新UI（每100ms检查一次）
+        collab_status_check_timer = lv_timer_create(collab_status_check_timer_cb, 100, NULL);
+    } else if (state == COLLAB_DRAW_STATE_CONNECTED && is_host_mode) {
+        // 已连接，断开（主机模式）
+        // 停止检查定时器
+        if (collab_status_check_timer) {
+            lv_timer_del(collab_status_check_timer);
+            collab_status_check_timer = NULL;
+        }
+        
+        // 断开连接
+        collaborative_draw_stop();
+        collaborative_draw_cleanup();
+        is_host_mode = false;
+        // 重置线程ID
+        connect_thread = 0;
+        lv_label_set_text(label, "连接协作");
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x4CAF50), 0);  // 绿色
+        
+        // 恢复其他按钮
+        if (collab_join_btn) {
+            lv_obj_set_style_bg_color(collab_join_btn, lv_color_hex(0x2196F3), 0);
+        }
+        if (collab_end_btn) {
+            lv_obj_add_flag(collab_end_btn, LV_OBJ_FLAG_HIDDEN);
+        }
+        
+        collab_connect_btn = NULL;
+        printf("[触摸绘图] 协作绘图模式已断开（主机）\n");
+    } else {
+        // 如果状态不是CONNECTED，检查是否是连接失败后的状态
+        if (state == COLLAB_DRAW_STATE_ERROR || state == COLLAB_DRAW_STATE_DISCONNECTED) {
+            // 连接失败或已断开，重置状态
+            is_host_mode = false;
+            connect_thread = 0;
+            lv_label_set_text(label, "连接协作");
+            lv_obj_set_style_bg_color(btn, lv_color_hex(0x4CAF50), 0);  // 绿色
+        } else {
+            lv_label_set_text(label, "未启用");
+            lv_obj_set_style_bg_color(btn, lv_color_hex(0x9E9E9E), 0);  // 灰色
+        }
+    }
+}
+
+// 加入协作按钮回调（作为客机加入他人的协作）
+static void collaborative_join_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
+        return;
+    }
+    
+    lv_obj_t *btn = lv_event_get_target(e);
+    lv_obj_t *label = lv_obj_get_child(btn, 0);
+    collaborative_draw_state_t state = collaborative_draw_get_state();
+    
+    // 如果正在连接中，忽略点击（防止重复点击导致连接中断）
+    if (state == COLLAB_DRAW_STATE_CONNECTING) {
+        printf("[触摸绘图] 连接正在进行中，忽略重复点击\n");
+        return;
+    }
+    
+    // 如果已经是主机模式，先退出
+    if (is_host_mode) {
+        collaborative_draw_stop();
+        is_host_mode = false;
+    }
+    
+    if (collaborative_mode && state != COLLAB_DRAW_STATE_CONNECTED) {
+        // 停止之前的检查定时器
+        if (collab_status_check_timer) {
+            lv_timer_del(collab_status_check_timer);
+            collab_status_check_timer = NULL;
+        }
+        
+        // 如果之前的加入线程还在运行，等待它退出
+        if (join_thread != 0) {
+            int ret = pthread_kill(join_thread, 0);
+            if (ret == 0) {
+                // 线程还在运行，等待其退出（最多等待1秒）
+                printf("[触摸绘图] 等待之前的加入线程退出...\n");
+                for (int i = 0; i < 10; i++) {
+                    usleep(100000);  // 100ms
+                    ret = pthread_kill(join_thread, 0);
+                    if (ret != 0) {
+                        // 线程已退出
+                        break;
+                    }
+                }
+                if (ret == 0) {
+                    // 线程仍在运行，强制重置（可能是卡住了）
+                    printf("[触摸绘图] 加入线程超时，强制重置\n");
+                }
+            }
+            // 重置线程ID（无论线程是否还在运行）
+            join_thread = 0;
+        }
+        
+        // 确保之前的状态已清理
+        if (state == COLLAB_DRAW_STATE_DISCONNECTED || state == COLLAB_DRAW_STATE_ERROR) {
+            collaborative_draw_stop();
+            collaborative_draw_cleanup();
+            // 等待一下确保资源释放
+            usleep(50000);  // 50ms
+        }
+        
+        // 启动协作绘图连接（作为客机）
+        is_guest_mode = true;
+        lv_label_set_text(label, "搜索中...");
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0xFFA500), 0);  // 橙色
+        collab_join_btn = btn;
+        
+        // 更新其他按钮状态
+        if (collab_connect_btn) {
+            lv_obj_set_style_bg_color(collab_connect_btn, lv_color_hex(0x9E9E9E), 0);
+        }
+        if (collab_end_btn) {
+            lv_obj_clear_flag(collab_end_btn, LV_OBJ_FLAG_HIDDEN);
+        }
+        
+        // 在后台线程中执行连接（传递线程ID指针，以便线程退出时重置）
+        if (pthread_create(&join_thread, NULL, collaborative_connect_thread_func, &join_thread) != 0) {
+            printf("[触摸绘图] 创建加入线程失败\n");
+            lv_label_set_text(label, "加入失败");
+            lv_obj_set_style_bg_color(btn, lv_color_hex(0xF44336), 0);  // 红色
+            is_guest_mode = false;
+            join_thread = 0;
+            return;
+        }
+        // 不detach，让线程自然退出后可以被join
+        
+        // 使用定时器检查连接状态并更新UI
+        collab_status_check_timer = lv_timer_create(collab_status_check_timer_cb, 100, NULL);
+    } else if (state == COLLAB_DRAW_STATE_CONNECTED && is_guest_mode) {
+        // 已连接，断开（客机模式）
+        if (collab_status_check_timer) {
+            lv_timer_del(collab_status_check_timer);
+            collab_status_check_timer = NULL;
+        }
+        
+        collaborative_draw_stop();
+        collaborative_draw_cleanup();
+        is_guest_mode = false;
+        // 重置线程ID
+        join_thread = 0;
+        lv_label_set_text(label, "加入协作");
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x2196F3), 0);  // 蓝色
+        
+        // 恢复其他按钮
+        if (collab_connect_btn) {
+            lv_obj_set_style_bg_color(collab_connect_btn, lv_color_hex(0x4CAF50), 0);
+        }
+        if (collab_end_btn) {
+            lv_obj_add_flag(collab_end_btn, LV_OBJ_FLAG_HIDDEN);
+        }
+        
+        collab_join_btn = NULL;
+        printf("[触摸绘图] 协作绘图模式已断开（客机）\n");
+    } else if (state == COLLAB_DRAW_STATE_ERROR || state == COLLAB_DRAW_STATE_DISCONNECTED) {
+        // 连接失败或已断开，重置状态
+        is_guest_mode = false;
+        join_thread = 0;
+        lv_label_set_text(label, "加入协作");
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x2196F3), 0);  // 蓝色
+    }
+}
+
+// 结束协作按钮回调（结束主机或客机的协作）
+static void collaborative_end_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
+        return;
+    }
+    
+    // 停止检查定时器
+    if (collab_status_check_timer) {
+        lv_timer_del(collab_status_check_timer);
+        collab_status_check_timer = NULL;
+    }
+    
+    // 断开连接
+    collaborative_draw_stop();
+    collaborative_draw_cleanup();
+    
+    // 重置状态
+    is_host_mode = false;
+    is_guest_mode = false;
+    // 重置线程ID
+    connect_thread = 0;
+    join_thread = 0;
+    
+    // 更新按钮状态
+    if (collab_connect_btn) {
+        lv_obj_t *label = lv_obj_get_child(collab_connect_btn, 0);
+        lv_label_set_text(label, "连接协作");
+        lv_obj_set_style_bg_color(collab_connect_btn, lv_color_hex(0x4CAF50), 0);  // 绿色
+    }
+    if (collab_join_btn) {
+        lv_obj_t *label = lv_obj_get_child(collab_join_btn, 0);
+        lv_label_set_text(label, "加入协作");
+        lv_obj_set_style_bg_color(collab_join_btn, lv_color_hex(0x2196F3), 0);  // 蓝色
+    }
+    if (collab_end_btn) {
+        lv_obj_add_flag(collab_end_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+    
+    printf("[触摸绘图] 协作绘图已结束\n");
+}
+
 // 返回主页回调
+static bool back_button_processing = false;  // 防止重复处理
+
 static void touch_draw_back_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
         return;
     }
     
-    // 停止触摸绘图
+    // 防止重复处理
+    if (back_button_processing) {
+        printf("[触摸绘图] 返回按钮正在处理中，忽略重复点击\n");
+        return;
+    }
+    
+    back_button_processing = true;
+    printf("[触摸绘图] 返回按钮被点击，开始清理资源\n");
+    
+    // 先停止触摸绘图（这会停止线程并清理资源）
     touch_draw_cleanup();
+    
+    // 等待一段时间，确保所有资源都已清理完成
+    usleep(100000);  // 100ms
+    
+    // 多次处理LVGL定时器，确保所有清理操作都完成
+    for (int i = 0; i < 10; i++) {
+        lv_timer_handler();
+        usleep(10000);  // 10ms
+    }
     
     // 返回到进入时的页面
     extern lv_obj_t* get_main_page1_screen(void);
     extern lv_obj_t* get_main_page2_screen(void);
     extern void switch_to_page(int);
+    extern int get_current_page_index(void);
     
-    lv_obj_t *target_screen = (saved_page_index == 0) ? get_main_page1_screen() : get_main_page2_screen();
-    if (target_screen) {
-        // 切换到保存的页面
-        extern int get_current_page_index(void);
+    // 确保两个页面都正确显示/隐藏
+    lv_obj_t *page1_screen = get_main_page1_screen();
+    lv_obj_t *page2_screen = get_main_page2_screen();
+    
+    if (page1_screen && page2_screen) {
         int current = get_current_page_index();
+        
+        // 如果当前页面和目标页面不同，使用switch_to_page切换（会处理隐藏逻辑）
         if (current != saved_page_index) {
             switch_to_page(saved_page_index);
         } else {
-            lv_obj_clear_flag(target_screen, LV_OBJ_FLAG_HIDDEN);
-            lv_scr_load(target_screen);
+            // 当前页面已经是目标页面，确保另一个页面被隐藏
+            if (saved_page_index == 0) {
+                // 目标是页面1，确保页面2被隐藏
+                lv_obj_add_flag(page2_screen, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(page1_screen, LV_OBJ_FLAG_HIDDEN);
+                lv_scr_load(page1_screen);
+            } else {
+                // 目标是页面2，确保页面1被隐藏
+                lv_obj_add_flag(page1_screen, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(page2_screen, LV_OBJ_FLAG_HIDDEN);
+                lv_scr_load(page2_screen);
+            }
         }
         
-        // 强制刷新
+        // 多次处理定时器，确保页面切换完成
+        for (int i = 0; i < 15; i++) {
+            lv_timer_handler();
+            usleep(10000);  // 10ms
+        }
+        
+        // 强制刷新显示
         lv_refr_now(NULL);
         printf("[触摸绘图] 返回到页面 %d\n", saved_page_index);
     }
+    
+    // 重置标志，允许再次处理
+    back_button_processing = false;
 }
 
 // 笔触大小选择回调（通过用户数据传递大小索引）
@@ -333,6 +803,52 @@ static void eraser_toggle_cb(lv_event_t *e) {
     }
 }
 
+// 远程绘图回调（接收其他用户的绘图操作）
+static void remote_draw_callback(uint16_t x, uint16_t y, uint16_t prev_x, uint16_t prev_y,
+                                 uint8_t remote_pen_size, uint32_t color, bool is_eraser, void *user_data) {
+    (void)user_data;
+    
+    // 检查framebuffer是否已映射
+    if (!fb_info.fbp || fb_info.fbp == MAP_FAILED) {
+        return;
+    }
+    
+    // 检查坐标是否在绘图区域内
+    if (x >= fb_info.vinfo.xres || y >= fb_info.vinfo.yres) {
+        return;
+    }
+    
+    // 检查是否在工具栏区域
+    if (y < 60 || y >= 400 || (x >= 720 && y >= 60 && y < 340)) {
+        return;  // 在工具栏区域，不绘制
+    }
+    
+    pthread_mutex_lock(&fb_mutex);
+    
+    int radius = remote_pen_size;
+    uint32_t draw_color = color;
+    
+    // 绘制远程用户的绘图操作
+    if (prev_x == x && prev_y == y) {
+        // 单点
+        draw_circle_point(&fb_info, x, y, draw_color, radius);
+    } else {
+        // 线条
+        int dx = abs(x - prev_x);
+        int dy = abs(y - prev_y);
+        int steps = (dx > dy ? dx : dy) + 1;
+        
+        for (int i = 0; i <= steps; i++) {
+            int px = prev_x + (x - prev_x) * i / steps;
+            int py = prev_y + (y - prev_y) * i / steps;
+            draw_circle_point(&fb_info, px, py, draw_color, radius);
+        }
+    }
+    
+    msync(fb_info.fbp, fb_info.screensize, MS_SYNC);
+    pthread_mutex_unlock(&fb_mutex);
+}
+
 // 清屏回调
 static void clear_screen_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
@@ -361,6 +877,12 @@ static void clear_screen_cb(lv_event_t *e) {
         msync(fb_info.fbp, fb_info.screensize, MS_SYNC);
         pthread_mutex_unlock(&fb_mutex);
         printf("[触摸绘图] 清屏完成\n");
+        
+        // 如果启用协作模式，发送清屏操作到服务器
+        if (collaborative_mode) {
+            collaborative_draw_send_clear();
+        }
+        
         // 刷新LVGL显示，确保按钮位置正确
         lv_refr_now(NULL);
     } else {
@@ -507,6 +1029,11 @@ static void* touch_draw_thread_func(void* arg) {
                 // 被信号中断，继续
                 continue;
             }
+            // 如果文件描述符无效，说明已被关闭，退出线程
+            if (errno == EBADF) {
+                printf("[触摸绘图] 触摸设备文件描述符已关闭，退出线程\n");
+                break;
+            }
             perror("[触摸绘图] Error reading touch event");
             break;
         }
@@ -539,10 +1066,33 @@ static void* touch_draw_thread_func(void* arg) {
                 if (screen_y >= SCREEN_HEIGHT) screen_y = SCREEN_HEIGHT - 1;
                 
                 // 检查是否在工具栏区域（顶部、底部、右侧）
+                // 按钮布局：
+                // - 返回按钮：x=[10,90], y=[10,50], 大小80x40
+                // - 连接协作按钮：x=[100,200], y=[10,50], 大小100x40
+                // - 加入协作按钮：x=[210,310], y=[10,50], 大小100x40
+                // - 结束协作按钮：x=[320,420], y=[10,50], 大小100x40（可能隐藏）
                 bool in_toolbar = false;
-                // 顶部工具栏：0-59像素（包括返回按钮区域）
                 if (screen_y < 60) {
-                    in_toolbar = true;
+                    // 左上角区域（返回按钮）：x=[10,90], y=[10,50]
+                    if (screen_x >= 10 && screen_x < 90 && screen_y >= 10 && screen_y < 50) {
+                        in_toolbar = true;
+                    }
+                    // 连接协作按钮区域：x=[100,200], y=[10,50]
+                    else if (screen_x >= 100 && screen_x < 200 && screen_y >= 10 && screen_y < 50) {
+                        in_toolbar = true;
+                    }
+                    // 加入协作按钮区域：x=[210,310], y=[10,50]
+                    else if (screen_x >= 210 && screen_x < 310 && screen_y >= 10 && screen_y < 50) {
+                        in_toolbar = true;
+                    }
+                    // 结束协作按钮区域：x=[320,420], y=[10,50]
+                    else if (screen_x >= 320 && screen_x < 420 && screen_y >= 10 && screen_y < 50) {
+                        in_toolbar = true;
+                    }
+                    // 其他顶部区域不算工具栏（允许绘制）
+                    else {
+                        in_toolbar = false;
+                    }
                 }
                 // 底部工具栏：400-479像素（480-80=400），包括颜色按钮区域
                 else if (screen_y >= 400) {
@@ -554,8 +1104,99 @@ static void* touch_draw_thread_func(void* arg) {
                 }
                 
                 if (in_toolbar) {
-                    // 在工具栏区域，不设置触摸状态，直接跳过
-                    printf("[触摸绘图] Touch in toolbar area, ignored: (%d, %d)\n", screen_x, screen_y);
+                    // 在工具栏区域，需要让LVGL处理按钮点击
+                    // 手动触发按钮点击事件（不改变touch_draw_running，避免影响连接线程）
+                    printf("[触摸绘图] Touch in toolbar area, processing button click: (%d, %d)\n", screen_x, screen_y);
+                    
+                    // 检查是哪个按钮被点击
+                    lv_obj_t *clicked_btn = NULL;
+                    if (screen_x >= 10 && screen_x < 90 && screen_y >= 10 && screen_y < 50) {
+                        // 返回按钮
+                        clicked_btn = back_btn;
+                        printf("[触摸绘图] 返回按钮被点击\n");
+                    } else if (screen_x >= 100 && screen_x < 200 && screen_y >= 10 && screen_y < 50) {
+                        // 连接协作按钮
+                        clicked_btn = collab_connect_btn;
+                    } else if (screen_x >= 210 && screen_x < 310 && screen_y >= 10 && screen_y < 50) {
+                        // 加入协作按钮
+                        clicked_btn = collab_join_btn;
+                    } else if (screen_x >= 320 && screen_x < 420 && screen_y >= 10 && screen_y < 50) {
+                        // 结束协作按钮
+                        clicked_btn = collab_end_btn;
+                    }
+                    
+                    // 如果找到了按钮，手动触发点击事件
+                    if (clicked_btn && !lv_obj_has_flag(clicked_btn, LV_OBJ_FLAG_HIDDEN)) {
+                        // 先处理LVGL定时器，确保事件系统就绪
+                        for (int i = 0; i < 3; i++) {
+                            lv_timer_handler();
+                            usleep(5000);  // 5ms
+                        }
+                        
+                        // 发送PRESSED事件（模拟按下）
+                        lv_event_send(clicked_btn, LV_EVENT_PRESSED, NULL);
+                        lv_timer_handler();
+                        
+                        // 等待一下，模拟真实的按下-释放间隔
+                        usleep(50000);  // 50ms
+                        
+                        // 发送RELEASED事件（模拟释放）
+                        lv_event_send(clicked_btn, LV_EVENT_RELEASED, NULL);
+                        lv_timer_handler();
+                        
+                        // 发送CLICKED事件（最终点击事件）
+                        lv_event_send(clicked_btn, LV_EVENT_CLICKED, NULL);
+                        
+                        // 多次处理定时器，确保所有事件回调都被执行
+                        for (int i = 0; i < 10; i++) {
+                            lv_timer_handler();
+                            usleep(5000);  // 5ms
+                        }
+                        
+                        // 刷新显示，确保UI更新
+                        lv_refr_now(NULL);
+                        
+                        printf("[触摸绘图] 按钮点击事件已触发并处理\n");
+                    }
+                    
+                    // 快速跳过后续的触摸事件，避免阻塞
+                    // 最多读取几个事件，如果没找到释放事件就继续（避免长时间阻塞）
+                    struct input_event next_ev;
+                    int release_found = 0;
+                    int max_events = 10;  // 最多读取10个事件
+                    while (touch_draw_running && !release_found && max_events-- > 0) {
+                        ssize_t n_read = read(touch_fd, &next_ev, sizeof(struct input_event));
+                        if (n_read < 0) {
+                            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                                // 没有更多事件，退出循环
+                                break;
+                            }
+                            // 如果文件描述符无效，退出（可能已被关闭）
+                            if (errno == EBADF) {
+                                break;
+                            }
+                            break;
+                        }
+                        
+                        // 检查是否是触摸释放事件
+                        if (next_ev.type == EV_KEY && next_ev.code == BTN_TOUCH && next_ev.value == 0) {
+                            release_found = 1;
+                            printf("[触摸绘图] 按钮区域触摸已释放\n");
+                            break;
+                        }
+                        
+                        // 如果是SYN_REPORT事件，也需要处理
+                        if (next_ev.type == EV_SYN && next_ev.code == SYN_REPORT) {
+                            // 继续等待释放事件
+                            continue;
+                        }
+                    }
+                    
+                    // 如果没有找到释放事件，继续处理（避免阻塞）
+                    if (!release_found) {
+                        printf("[触摸绘图] 按钮区域事件已跳过\n");
+                    }
+                    
                     continue;
                 }
                 
@@ -588,10 +1229,33 @@ static void* touch_draw_thread_func(void* arg) {
                 if (screen_y >= SCREEN_HEIGHT) screen_y = SCREEN_HEIGHT - 1;
                 
                 // 再次检查是否在工具栏区域（顶部、底部、右侧）- 如果在工具栏区域则不绘制
+                // 按钮布局：
+                // - 返回按钮：x=[10,90], y=[10,50], 大小80x40
+                // - 连接协作按钮：x=[100,200], y=[10,50], 大小100x40
+                // - 加入协作按钮：x=[210,310], y=[10,50], 大小100x40
+                // - 结束协作按钮：x=[320,420], y=[10,50], 大小100x40（可能隐藏）
                 bool in_toolbar = false;
-                // 顶部工具栏：0-59像素（包括返回按钮区域）
                 if (screen_y < 60) {
-                    in_toolbar = true;
+                    // 左上角区域（返回按钮）：x=[10,90], y=[10,50]
+                    if (screen_x >= 10 && screen_x < 90 && screen_y >= 10 && screen_y < 50) {
+                        in_toolbar = true;
+                    }
+                    // 连接协作按钮区域：x=[100,200], y=[10,50]
+                    else if (screen_x >= 100 && screen_x < 200 && screen_y >= 10 && screen_y < 50) {
+                        in_toolbar = true;
+                    }
+                    // 加入协作按钮区域：x=[210,310], y=[10,50]
+                    else if (screen_x >= 210 && screen_x < 310 && screen_y >= 10 && screen_y < 50) {
+                        in_toolbar = true;
+                    }
+                    // 结束协作按钮区域：x=[320,420], y=[10,50]
+                    else if (screen_x >= 320 && screen_x < 420 && screen_y >= 10 && screen_y < 50) {
+                        in_toolbar = true;
+                    }
+                    // 其他顶部区域不算工具栏（允许绘制）
+                    else {
+                        in_toolbar = false;
+                    }
                 }
                 // 底部工具栏：400-479像素（480-80=400），包括颜色按钮区域
                 else if (screen_y >= 400) {
@@ -637,6 +1301,25 @@ static void* touch_draw_thread_func(void* arg) {
                 pthread_mutex_lock(&fb_mutex);
                 msync(fb_info.fbp, fb_info.screensize, MS_SYNC);
                 pthread_mutex_unlock(&fb_mutex);
+                
+                // 如果启用协作模式，发送绘图操作到服务器（检查连接状态，避免崩溃）
+                if (collaborative_mode && collaborative_draw_get_state() == COLLAB_DRAW_STATE_CONNECTED) {
+                    // 静默发送，失败不影响本地绘制
+                    int send_ret = collaborative_draw_send_operation(
+                        screen_x, screen_y,
+                        last_screen_x, last_screen_y,
+                        pen_size, draw_color, eraser_mode);
+                    // 如果发送失败，可能是连接已断开，切换到正常模式
+                    if (send_ret != 0 && collaborative_draw_get_state() == COLLAB_DRAW_STATE_DISCONNECTED) {
+                        printf("[触摸绘图] 协作绘图连接已断开，切换到正常模式\n");
+                        collaborative_mode = false;
+                        // 更新按钮状态
+                        if (collab_connect_btn) {
+                            lv_label_set_text(lv_obj_get_child(collab_connect_btn, 0), "连接协作");
+                            lv_obj_set_style_bg_color(collab_connect_btn, lv_color_hex(0x2196F3), 0);  // 蓝色
+                        }
+                    }
+                }
                 
                 // 更新上一个点的坐标
                 last_screen_x = screen_x;
@@ -796,7 +1479,7 @@ void touch_draw_win_show(void) {
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
     
     // 创建返回按钮（同一层级，不使用move_foreground）
-    lv_obj_t *back_btn = lv_btn_create(touch_draw_window);
+    back_btn = lv_btn_create(touch_draw_window);
     lv_obj_set_size(back_btn, 80, 40);
     lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x9E9E9E), 0);
     lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 10, 10);
@@ -939,6 +1622,96 @@ void touch_draw_win_show(void) {
     saved_page_index = get_current_page_index();
     printf("[触摸绘图] 保存当前页面索引: %d\n", saved_page_index);
     
+    // 创建协作绘图按钮（在标题栏左侧，返回按钮旁边）
+    // 按钮布局：返回按钮(10,10,80x40) | 连接协作按钮(100,10,100x40) | 加入协作按钮(210,10,100x40) | 结束协作按钮(320,10,100x40)
+    
+    // 1. 连接协作按钮（作为主机开启协作）- 放在返回按钮右侧
+    collab_connect_btn = lv_btn_create(touch_draw_window);
+    lv_obj_set_size(collab_connect_btn, 100, 40);
+    lv_obj_set_style_bg_color(collab_connect_btn, lv_color_hex(0x4CAF50), 0);  // 绿色
+    lv_obj_align(collab_connect_btn, LV_ALIGN_TOP_LEFT, 100, 10);  // 返回按钮右侧
+    lv_obj_t *collab_connect_label = lv_label_create(collab_connect_btn);
+    lv_label_set_text(collab_connect_label, "连接协作");
+    lv_obj_set_style_text_font(collab_connect_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(collab_connect_label);
+    lv_obj_add_event_cb(collab_connect_btn, collaborative_connect_cb, LV_EVENT_CLICKED, NULL);
+    
+    // 2. 加入协作按钮（作为客机加入他人的协作）
+    collab_join_btn = lv_btn_create(touch_draw_window);
+    lv_obj_set_size(collab_join_btn, 100, 40);
+    lv_obj_set_style_bg_color(collab_join_btn, lv_color_hex(0x2196F3), 0);  // 蓝色
+    lv_obj_align(collab_join_btn, LV_ALIGN_TOP_LEFT, 210, 10);  // 连接协作按钮右侧
+    lv_obj_t *collab_join_label = lv_label_create(collab_join_btn);
+    lv_label_set_text(collab_join_label, "加入协作");
+    lv_obj_set_style_text_font(collab_join_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(collab_join_label);
+    lv_obj_add_event_cb(collab_join_btn, collaborative_join_cb, LV_EVENT_CLICKED, NULL);
+    
+    // 3. 结束协作按钮（结束主机或客机的协作）- 默认隐藏
+    collab_end_btn = lv_btn_create(touch_draw_window);
+    lv_obj_set_size(collab_end_btn, 100, 40);
+    lv_obj_set_style_bg_color(collab_end_btn, lv_color_hex(0xF44336), 0);  // 红色
+    lv_obj_align(collab_end_btn, LV_ALIGN_TOP_LEFT, 320, 10);  // 加入协作按钮右侧
+    lv_obj_add_flag(collab_end_btn, LV_OBJ_FLAG_HIDDEN);  // 默认隐藏，连接成功后才显示
+    lv_obj_t *collab_end_label = lv_label_create(collab_end_btn);
+    lv_label_set_text(collab_end_label, "结束协作");
+    lv_obj_set_style_text_font(collab_end_label, &SourceHanSansSC_VF, 0);
+    lv_obj_center(collab_end_label);
+    lv_obj_add_event_cb(collab_end_btn, collaborative_end_cb, LV_EVENT_CLICKED, NULL);
+    
+    // 初始化协作绘图模块（但不连接）
+    // 注意：连接将通过按钮触发
+    // 使用巴法云TCP协议进行设备间通信
+    // 如果之前已经清理过（collaborative_mode为false），需要重新初始化
+    if (!collaborative_mode) {
+        collaborative_draw_config_t collab_config = {0};
+        collab_config.enabled = true;
+        strncpy(collab_config.server_host, "bemfa.com",  // 巴法云TCP服务器
+                sizeof(collab_config.server_host) - 1);
+        collab_config.server_port = 8344;  // 巴法云TCP端口（8344为TCP协议端口）
+        collab_config.user_id = (uint32_t)time(NULL) % 1000000;
+        strncpy(collab_config.room_id, "default_room", sizeof(collab_config.room_id) - 1);
+        strncpy(collab_config.device_name, "GEC6818",  // TODO: 请替换为您的设备名称（TCP协议的主题）
+                sizeof(collab_config.device_name) - 1);
+        strncpy(collab_config.private_key, "your_password",  // TODO: 请替换为您的巴法云私钥（TCP协议的UID）
+                sizeof(collab_config.private_key) - 1);
+        
+        if (collaborative_draw_init(&collab_config) == 0) {
+            // 设置远程绘图回调
+            collaborative_draw_set_remote_draw_callback(remote_draw_callback, NULL);
+            collaborative_mode = true;
+            printf("[触摸绘图] 协作绘图模块已重新初始化（等待连接）\n");
+            // 注意：不在这里启动连接，等待用户点击按钮
+        } else {
+            printf("[触摸绘图] 协作绘图模块初始化失败\n");
+            collaborative_mode = false;
+        }
+    } else {
+        // 如果collaborative_mode已经是true，检查是否需要重新初始化
+        // 检查模块状态，如果已断开连接但未初始化，重新初始化
+        collaborative_draw_state_t state = collaborative_draw_get_state();
+        if (state == COLLAB_DRAW_STATE_DISCONNECTED) {
+            // 检查是否需要重新初始化（模块可能已经被清理）
+            // 尝试初始化以确保模块就绪
+            collaborative_draw_config_t collab_config = {0};
+            collab_config.enabled = true;
+            strncpy(collab_config.server_host, "bemfa.com",
+                    sizeof(collab_config.server_host) - 1);
+            collab_config.server_port = 8344;
+            collab_config.user_id = (uint32_t)time(NULL) % 1000000;
+            strncpy(collab_config.room_id, "default_room", sizeof(collab_config.room_id) - 1);
+            strncpy(collab_config.device_name, "GEC6818",  // TODO: 请替换为您的设备名称
+                    sizeof(collab_config.device_name) - 1);
+            strncpy(collab_config.private_key, "your_password",  // TODO: 请替换为您的巴法云私钥
+                    sizeof(collab_config.private_key) - 1);
+            
+            if (collaborative_draw_init(&collab_config) == 0) {
+                collaborative_draw_set_remote_draw_callback(remote_draw_callback, NULL);
+                printf("[触摸绘图] 协作绘图模块已初始化（等待连接）\n");
+            }
+        }
+    }
+    
     // 先确保触摸绘图模式未激活，允许LVGL正常刷新整个窗口
     touch_draw_running = false;
     
@@ -976,10 +1749,10 @@ void touch_draw_win_show(void) {
                 int top_bar = 60;      // 顶部区域
                 int bottom_bar = 80;   // 底部工具栏
                 int right_bar = 80;    // 右侧工具栏
-                int right_start_x = vinfo.xres - right_bar;
+                int clear_right_start_x = vinfo.xres - right_bar;
                 // 只清空中间绘图区域（排除右侧工具栏）
                 for (int y = top_bar; y < vinfo.yres - bottom_bar; y++) {
-                    for (int x = 0; x < right_start_x; x++) {
+                    for (int x = 0; x < clear_right_start_x; x++) {
                         int pixel_idx = y * vinfo.xres + x;
                         fb_ptr[pixel_idx] = COLOR_WHITE;
                     }
@@ -1065,13 +1838,27 @@ void touch_draw_init(void) {
  * @brief 清理触摸绘图模块
  */
 void touch_draw_cleanup(void) {
+    // 防止重复清理（通过back_button_processing标志）
+    static bool cleanup_in_progress = false;
+    if (cleanup_in_progress) {
+        return;
+    }
+    
     if (!touch_draw_running && touch_draw_thread == 0) {
         // 已经清理过了，直接返回
         return;
     }
     
+    cleanup_in_progress = true;
     printf("[触摸绘图] 正在停止...\n");
     touch_draw_running = false;
+    
+    // 停止协作绘图
+    if (collaborative_mode) {
+        collaborative_draw_stop();
+        collaborative_draw_cleanup();
+        collaborative_mode = false;
+    }
     
     // 等待线程退出
     if (touch_draw_thread != 0) {
@@ -1095,6 +1882,7 @@ void touch_draw_cleanup(void) {
         fb_info.fd = -1;
     }
     
+    cleanup_in_progress = false;
     printf("[触摸绘图] 模块清理完成\n");
 }
 
@@ -1103,4 +1891,19 @@ void touch_draw_cleanup(void) {
  */
 bool touch_draw_is_active(void) {
     return touch_draw_running;
+}
+
+/**
+ * @brief 启用/禁用协作绘图模式
+ */
+void touch_draw_set_collaborative_mode(bool enabled) {
+    collaborative_mode = enabled;
+    printf("[触摸绘图] 协作模式: %s\n", enabled ? "启用" : "禁用");
+}
+
+/**
+ * @brief 获取协作绘图模式状态
+ */
+bool touch_draw_get_collaborative_mode(void) {
+    return collaborative_mode;
 }

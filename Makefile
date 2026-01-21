@@ -5,9 +5,49 @@ CC = arm-linux-gnueabihf-gcc
 LVGL_DIR_NAME ?= lvgl
 LVGL_DIR ?= ${shell pwd}
 BUILD_DIR = build
-CFLAGS ?= -O3 -g0 -I$(LVGL_DIR)/ -Isrc/ -Wall -Wshadow -Wundef -Wmissing-prototypes -Wno-discarded-qualifiers -Wall -Wextra -Wno-unused-function -Wno-error=strict-prototypes -Wpointer-arith -fno-strict-aliasing -Wno-error=cpp -Wuninitialized -Wmaybe-uninitialized -Wno-unused-parameter -Wno-missing-field-initializers -Wtype-limits -Wsizeof-pointer-memaccess -Wno-format-nonliteral -Wno-cast-qual -Wunreachable-code -Wno-switch-default -Wreturn-type -Wmultichar -Wformat-security -Wno-ignored-qualifiers -Wno-error=pedantic -Wno-sign-compare -Wno-error=missing-prototypes -Wdouble-promotion -Wclobbered -Wdeprecated -Wempty-body -Wtype-limits -Wstack-usage=2048 -Wno-unused-value -Wno-unused-parameter -Wno-missing-field-initializers -Wuninitialized -Wmaybe-uninitialized -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wtype-limits -Wsizeof-pointer-memaccess -Wno-format-nonliteral -Wpointer-arith -Wno-cast-qual -Wmissing-prototypes -Wunreachable-code -Wno-switch-default -Wreturn-type -Wmultichar -Wno-discarded-qualifiers -Wformat-security -Wno-ignored-qualifiers -Wno-sign-compare
+
+# OpenSSL 支持（已禁用，LVGL项目不支持OpenSSL）
+# 如需启用，可以设置 USE_OPENSSL=1
+USE_OPENSSL ?= 0
+
+# OpenSSL 路径（交叉编译环境）
+# 如果系统有OpenSSL，可以通过pkg-config获取路径，或手动指定
+USE_OPENSSL_DEFINE = 
+ifeq ($(USE_OPENSSL),1)
+    # 检查OpenSSL头文件是否存在
+    ifneq ($(wildcard /usr/include/openssl/opensslconf.h),)
+        # 系统OpenSSL可用
+        OPENSSL_INC = -I/usr/include
+        OPENSSL_LIB = -lssl -lcrypto
+        USE_OPENSSL_DEFINE = -DUSE_OPENSSL=1
+    else ifneq ($(wildcard /usr/arm-linux-gnueabihf/include/openssl/opensslconf.h),)
+        # ARM交叉编译工具链中的OpenSSL
+        OPENSSL_INC = -I/usr/arm-linux-gnueabihf/include
+        OPENSSL_LIB = -L/usr/arm-linux-gnueabihf/lib -lssl -lcrypto
+        USE_OPENSSL_DEFINE = -DUSE_OPENSSL=1
+    else ifneq ($(wildcard /usr/local/arm-linux-gnueabihf/include/openssl/opensslconf.h),)
+        # 本地安装的ARM OpenSSL
+        OPENSSL_INC = -I/usr/local/arm-linux-gnueabihf/include
+        OPENSSL_LIB = -L/usr/local/arm-linux-gnueabihf/lib -lssl -lcrypto
+        USE_OPENSSL_DEFINE = -DUSE_OPENSSL=1
+    else
+        # OpenSSL不可用，使用简化实现
+        $(warning OpenSSL not found, using simplified implementation)
+        OPENSSL_INC = 
+        OPENSSL_LIB = 
+        USE_OPENSSL_DEFINE = -DUSE_OPENSSL=0
+    endif
+else
+    # 显式禁用OpenSSL
+    OPENSSL_INC = 
+    OPENSSL_LIB = 
+    USE_OPENSSL_DEFINE = -DUSE_OPENSSL=0
+endif
+
+CFLAGS ?= -O3 -g0 -I$(LVGL_DIR)/ -Isrc/ $(OPENSSL_INC) $(USE_OPENSSL_DEFINE) -Wall -Wshadow -Wundef -Wmissing-prototypes -Wno-discarded-qualifiers -Wall -Wextra -Wno-unused-function -Wno-error=strict-prototypes -Wpointer-arith -fno-strict-aliasing -Wno-error=cpp -Wuninitialized -Wmaybe-uninitialized -Wno-unused-parameter -Wno-missing-field-initializers -Wtype-limits -Wsizeof-pointer-memaccess -Wno-format-nonliteral -Wno-cast-qual -Wunreachable-code -Wno-switch-default -Wreturn-type -Wmultichar -Wformat-security -Wno-ignored-qualifiers -Wno-error=pedantic -Wno-sign-compare -Wno-error=missing-prototypes -Wdouble-promotion -Wclobbered -Wdeprecated -Wempty-body -Wtype-limits -Wstack-usage=2048 -Wno-unused-value -Wno-unused-parameter -Wno-missing-field-initializers -Wuninitialized -Wmaybe-uninitialized -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wtype-limits -Wsizeof-pointer-memaccess -Wno-format-nonliteral -Wpointer-arith -Wno-cast-qual -Wmissing-prototypes -Wunreachable-code -Wno-switch-default -Wreturn-type -Wmultichar -Wno-discarded-qualifiers -Wformat-security -Wno-ignored-qualifiers -Wno-sign-compare
 # 链接选项（移除FFmpeg库，使用MPlayer + framebuffer播放器）
 # 使用静态链接以避免GLIBC版本不匹配问题
+# 注意：OpenSSL已禁用，不链接OpenSSL库
 LDFLAGS ?= -static -lm -lpthread
 BIN = demo
 
@@ -52,6 +92,9 @@ CSRCS += src/ui/clock_win.c
 CSRCS += src/ui/game_2048_win.c
 CSRCS += src/game_2048/game_2048.c
 CSRCS += src/touch_draw/touch_draw.c 
+CSRCS += src/collaborative_draw/draw_protocol.c
+CSRCS += src/collaborative_draw/bemfa_tcp_client.c
+CSRCS += src/collaborative_draw/collaborative_draw.c 
 
 OBJEXT ?= .o
 

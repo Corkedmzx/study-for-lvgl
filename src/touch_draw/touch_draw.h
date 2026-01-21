@@ -34,4 +34,16 @@ void touch_draw_cleanup(void);
  */
 bool touch_draw_is_active(void);
 
+/**
+ * @brief 启用/禁用协作绘图模式
+ * @param enabled true启用，false禁用
+ */
+void touch_draw_set_collaborative_mode(bool enabled);
+
+/**
+ * @brief 获取协作绘图模式状态
+ * @return true if collaborative mode is enabled, false otherwise
+ */
+bool touch_draw_get_collaborative_mode(void);
+
 #endif /* TOUCH_DRAW_H */

@@ -6,6 +6,8 @@
 
 本项目是基于 [lv_port_linux](https://github.com/lvgl/lv_port_linux) 开发的嵌入式图形界面应用，针对 **粤嵌 GEC6818** 开发板进行了优化和功能扩展。项目使用 LVGL v8.2 图形库，通过 Linux framebuffer 驱动实现图形显示，支持触摸屏交互。
 
+**注意**：本项目包含协作绘图功能，使用巴法云TCP协议。如需使用该功能，请在代码中配置您的巴法云设备名称和私钥（详情参见 `src/collaborative_draw/README.md`）。
+
 ## 系统要求
 
 - **目标平台**: ARM Linux (ARMv7)
@@ -70,6 +72,8 @@ chmod +x rebuild.sh
 │   ├── weather/           # 天气获取模块
 │   ├── time_sync/         # 时间同步模块
 │   ├── game_2048/         # 2048 游戏逻辑
+│   ├── touch_draw/        # 触摸绘图模块
+│   ├── collaborative_draw/# 协作绘图模块（巴法云TCP协议）
 │   └── ui/                # UI 界面模块
 │       ├── ui_screens.c   # 主界面创建
 │       ├── album_win.c    # 相册窗口
@@ -154,6 +158,29 @@ chmod +x rebuild.sh
 - 经典 2048 数字游戏
 - 触摸屏操作
 
+### 11. 触摸绘图 (Touch Draw)
+- 直接在屏幕上进行绘图
+- 支持多种笔触大小
+- 支持多种颜色选择
+- 橡皮擦功能
+- 清屏功能
+- 实时绘制到 framebuffer
+
+### 12. 协作绘图 (Collaborative Draw)
+- 基于巴法云TCP协议的多设备实时协作绘图
+- 支持多人在线同时绘图
+- 实时同步绘图操作到所有连接的设备
+- **功能特点**：
+  - 主机模式：创建协作房间
+  - 客机模式：加入他人的协作房间
+  - 实时同步：绘图操作实时同步到所有参与者
+  - 自动断线检测和重连
+- **配置说明**：
+  - 需要在 `src/touch_draw/touch_draw.c` 中配置巴法云设备名称和私钥
+  - 设备名称：`your_device_name`（作为TCP协议的主题）
+  - 私钥：`your_password`（作为TCP协议的UID）
+  - 详细配置和使用说明请参考 `src/collaborative_draw/README.md`
+
 ## 配置说明
 
 ### 媒体文件目录
@@ -167,6 +194,27 @@ chmod +x rebuild.sh
 
 如需修改，请编辑该文件后重新编译。
 
+### 协作绘图配置
+
+协作绘图功能需要在 `src/touch_draw/touch_draw.c` 中配置：
+
+```c
+collaborative_draw_config_t collab_config = {
+    .enabled = true,
+    .server_host = "bemfa.com",
+    .server_port = 8344,
+    .device_name = "your_device_name",    // 替换为您的设备名称
+    .private_key = "your_password"        // 替换为您的巴法云私钥
+};
+```
+
+**重要提示**：
+- 使用前请先注册巴法云账号并创建TCP设备
+- 将代码中的占位符替换为实际的设备名称和私钥
+- 不要将包含真实密钥的代码提交到公开仓库
+
+详细配置说明请参考 `src/collaborative_draw/README.md`。
+
 ### 编译选项
 
 编译配置在 `Makefile` 中：
@@ -174,6 +222,7 @@ chmod +x rebuild.sh
 - **编译器**: `arm-linux-gnueabihf-gcc`
 - **链接方式**: 静态链接 (`-static`) 以避免 GLIBC 版本不匹配问题
 - **优化级别**: `-O3 -g0`
+- **OpenSSL**: 已禁用（项目不支持OpenSSL）
 
 ### 字体
 
@@ -192,6 +241,7 @@ chmod +x rebuild.sh
 - **Linux Framebuffer**: 显示驱动
 - **MPlayer**: 音视频播放后端
 - **触摸屏驱动**: 支持触摸输入
+- **巴法云TCP协议**: 协作绘图通信协议
 
 ### 架构特点
 
@@ -201,11 +251,22 @@ chmod +x rebuild.sh
 - 内存映射优化，提升显示刷新速度
 - 多线程触屏控制，响应速度快
 - 智能进程状态检测，避免资源泄漏
+- 网络异步通信，支持多设备实时协作
+
+### 网络通信
+
+- **协议**: 巴法云TCP协议
+- **服务器**: bemfa.com:8344
+- **通信模式**: 发布/订阅（Pub/Sub）
+- **消息格式**: 键值对格式，字段用 `&` 分隔，以 `\r\n` 结尾
+- **数据编码**: 二进制数据编码为十六进制字符串传输
+- **心跳机制**: 60秒发送一次心跳，超过65秒未发送会断线
 
 ## 参考资源
 
 - LVGL 官方博客教程: [Linux Framebuffer](https://blog.lvgl.io/2018-01-03/linux_fb)
 - LVGL 官方文档: [https://docs.lvgl.io/](https://docs.lvgl.io/)
+- 巴法云TCP协议文档: [https://cloud.bemfa.com/docs/src/tcp_protocol.html](https://cloud.bemfa.com/docs/src/tcp_protocol.html)
 
 ## 已知问题
 
@@ -221,6 +282,22 @@ chmod +x rebuild.sh
    - 视频播放结束后，触屏控制仍保持激活，可切换视频或返回主页
 3. **返回主页**：点击屏幕左上角区域即可返回主页
 
+### 协作绘图操作
+
+1. **进入绘图界面**：从主界面点击"绘图"按钮
+2. **连接协作**：
+   - 点击"连接协作"按钮创建协作房间（主机模式）
+   - 点击"加入协作"按钮加入他人的协作房间（客机模式）
+   - 连接成功后，所有参与者的绘图操作将实时同步
+3. **绘图功能**：
+   - 选择笔触大小和颜色
+   - 直接在屏幕上绘制
+   - 使用橡皮擦功能擦除
+   - 使用清屏功能清除所有内容
+4. **结束协作**：点击"结束协作"按钮断开连接
+
+详细使用说明请参考 `src/touch_draw/README.md` 和 `src/collaborative_draw/README.md`。
+
 ## 注意事项
 
 ### 许可证
@@ -235,25 +312,12 @@ chmod +x rebuild.sh
 - 需要在交叉编译环境中构建
 - 确保目标设备已安装必要的系统库和 MPlayer
 
+### 安全提示
+
+- **不要将包含真实密钥的代码提交到公开仓库**
+- 协作绘图功能需要配置巴法云设备信息，请妥善保管您的私钥
+- 建议使用环境变量或配置文件（不纳入版本控制）来管理敏感信息
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request 来改进项目。
-
-## 更新日志
-
-### 最新版本
-- **视频播放器优化**：
-  - 添加性能优化参数（硬件加速解码、多线程处理）
-  - 优化视频播放结束后的状态管理
-  - 视频播放结束后保持触屏控制，支持切换视频或返回主页
-  - 自动检测进程状态，避免重复停止操作
-  - 修复视频播放结束后点击返回导致程序退出的问题
-- **触屏控制改进**：
-  - 优化上划/下划音量控制（放宽区域限制）
-  - 改进视频播放结束后的触屏响应
-  - 支持从屏幕边缘开始滑动操作
-
-### v8.2
-- 基于 LVGL v8.2 版本
-- 添加了多个功能模块（相册、播放器、游戏等）
-- 优化了视频播放和 UI 交互
