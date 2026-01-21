@@ -354,9 +354,9 @@ static void collaborative_connect_cb(lv_event_t *e) {
         collab_config.server_port = 8344;
         collab_config.user_id = (uint32_t)time(NULL) % 1000000;
         strncpy(collab_config.room_id, "default_room", sizeof(collab_config.room_id) - 1);
-        strncpy(collab_config.device_name, "GEC6818",  // TODO: 请替换为您的设备名称
+        strncpy(collab_config.device_name, "你的设备名称",
                 sizeof(collab_config.device_name) - 1);
-        strncpy(collab_config.private_key, "your_password",  // TODO: 请替换为您的巴法云私钥
+        strncpy(collab_config.private_key, "你的私钥",
                 sizeof(collab_config.private_key) - 1);
         
         if (collaborative_draw_init(&collab_config) == 0) {
@@ -1018,6 +1018,12 @@ static void* touch_draw_thread_func(void* arg) {
     
     // 主事件循环
     while (touch_draw_running) {
+        // 检查文件描述符是否有效
+        if (touch_fd < 0) {
+            printf("[触摸绘图] 触摸设备文件描述符无效，退出线程\n");
+            break;
+        }
+        
         // 读取触摸事件
         ssize_t n = read(touch_fd, &ev, sizeof(struct input_event));
         if (n == -1) {
@@ -1671,9 +1677,9 @@ void touch_draw_win_show(void) {
         collab_config.server_port = 8344;  // 巴法云TCP端口（8344为TCP协议端口）
         collab_config.user_id = (uint32_t)time(NULL) % 1000000;
         strncpy(collab_config.room_id, "default_room", sizeof(collab_config.room_id) - 1);
-        strncpy(collab_config.device_name, "GEC6818",  // TODO: 请替换为您的设备名称（TCP协议的主题）
+        strncpy(collab_config.device_name, "你的设备名称",  // 设备名称（TCP协议的主题）
                 sizeof(collab_config.device_name) - 1);
-        strncpy(collab_config.private_key, "your_password",  // TODO: 请替换为您的巴法云私钥（TCP协议的UID）
+        strncpy(collab_config.private_key, "你的私钥",  // 个人私钥（TCP协议的UID）
                 sizeof(collab_config.private_key) - 1);
         
         if (collaborative_draw_init(&collab_config) == 0) {
@@ -1700,9 +1706,9 @@ void touch_draw_win_show(void) {
             collab_config.server_port = 8344;
             collab_config.user_id = (uint32_t)time(NULL) % 1000000;
             strncpy(collab_config.room_id, "default_room", sizeof(collab_config.room_id) - 1);
-            strncpy(collab_config.device_name, "GEC6818",  // TODO: 请替换为您的设备名称
+            strncpy(collab_config.device_name, "你的设备名称",
                     sizeof(collab_config.device_name) - 1);
-            strncpy(collab_config.private_key, "your_password",  // TODO: 请替换为您的巴法云私钥
+            strncpy(collab_config.private_key, "你的私钥",
                     sizeof(collab_config.private_key) - 1);
             
             if (collaborative_draw_init(&collab_config) == 0) {
@@ -1774,6 +1780,22 @@ void touch_draw_win_show(void) {
             // 线程还在运行，先停止它
             printf("[触摸绘图] 检测到旧线程仍在运行，先停止\n");
             touch_draw_running = false;
+            // 先关闭文件描述符以中断阻塞的read()
+            if (touch_fd >= 0) {
+                close(touch_fd);
+                touch_fd = -1;
+            }
+            // 等待线程退出（带超时）
+            for (int i = 0; i < 20; i++) {
+                usleep(100000);  // 100ms
+                thread_alive = pthread_kill(touch_draw_thread, 0);
+                if (thread_alive != 0) {
+                    break;
+                }
+            }
+            if (thread_alive == 0) {
+                printf("[触摸绘图] 警告：线程仍未退出，强制join\n");
+            }
             pthread_join(touch_draw_thread, NULL);
             touch_draw_thread = 0;
             // 清理资源
@@ -1790,6 +1812,9 @@ void touch_draw_win_show(void) {
                 fb_info.fd = -1;
             }
             touch_draw_running = true;  // 重新设置
+        } else {
+            // 线程已退出，重置ID
+            touch_draw_thread = 0;
         }
     }
     
@@ -1838,9 +1863,10 @@ void touch_draw_init(void) {
  * @brief 清理触摸绘图模块
  */
 void touch_draw_cleanup(void) {
-    // 防止重复清理（通过back_button_processing标志）
+    // 防止重复清理
     static bool cleanup_in_progress = false;
     if (cleanup_in_progress) {
+        printf("[触摸绘图] 清理已在进行中，跳过\n");
         return;
     }
     
@@ -1851,6 +1877,8 @@ void touch_draw_cleanup(void) {
     
     cleanup_in_progress = true;
     printf("[触摸绘图] 正在停止...\n");
+    
+    // 先设置标志，让线程知道要退出
     touch_draw_running = false;
     
     // 停止协作绘图
@@ -1860,10 +1888,43 @@ void touch_draw_cleanup(void) {
         collaborative_mode = false;
     }
     
-    // 等待线程退出
+    // 关闭文件描述符以中断阻塞的read()调用
+    // 这会让线程中的read()立即返回（EBADF），从而退出循环
+    if (touch_fd >= 0) {
+        printf("[触摸绘图] 关闭触摸设备文件描述符以中断线程\n");
+        close(touch_fd);
+        touch_fd = -1;
+    }
+    
+    // 等待线程退出（带超时）
     if (touch_draw_thread != 0) {
-        if (pthread_join(touch_draw_thread, NULL) != 0) {
-            perror("[触摸绘图] Failed to join thread");
+        // 先检查线程是否还在运行
+        int thread_alive = pthread_kill(touch_draw_thread, 0);
+        if (thread_alive == 0) {
+            // 线程还在运行，等待其退出（最多等待2秒）
+            printf("[触摸绘图] 等待线程退出...\n");
+            for (int i = 0; i < 20; i++) {
+                usleep(100000);  // 100ms
+                thread_alive = pthread_kill(touch_draw_thread, 0);
+                if (thread_alive != 0) {
+                    // 线程已退出
+                    break;
+                }
+            }
+            
+            if (thread_alive == 0) {
+                printf("[触摸绘图] 警告：线程仍在运行，强制join\n");
+            }
+            
+            // 尝试join线程（即使可能失败）
+            if (pthread_join(touch_draw_thread, NULL) != 0) {
+                perror("[触摸绘图] Failed to join thread");
+                // 如果join失败，尝试detach线程（避免成为僵尸线程）
+                printf("[触摸绘图] 尝试detach线程...\n");
+                pthread_detach(touch_draw_thread);
+            }
+        } else {
+            printf("[触摸绘图] 线程已退出，清理线程ID\n");
         }
         touch_draw_thread = 0;
     }
