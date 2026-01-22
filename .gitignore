@@ -52,5 +52,5 @@ Mkfile.old
 dkms.conf
 /Debug/
 
-# 忽略特定源文件
+# ignore specific source files
 src/touch_draw/touch_draw.c
