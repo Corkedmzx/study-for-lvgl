@@ -19,6 +19,19 @@
 #include "lvgl/src/font/lv_symbol_def.h"
 #include "lvgl/src/widgets/lv_canvas.h"
 
+// 登录密码配置
+// 如果配置文件存在，直接包含；如果不存在，使用下面的默认占位符
+// 注意：配置文件 login_config.h 需要从模板文件创建
+// 详见 CONFIGURATION.md 和 src/ui/login_config.h.example
+#ifndef CORRECT_PASSWORD
+    #define CORRECT_PASSWORD "your_password_here"
+#endif
+#ifndef MAX_PASSWORD_LEN
+    #define MAX_PASSWORD_LEN 32
+#endif
+// 取消注释下面这行以使用配置文件（创建配置文件后）
+// #include "login_config.h"
+
 /* 声明FontAwesome字体 */
 extern const lv_font_t fa_solid_24;
 
@@ -61,9 +74,7 @@ static lv_obj_t *buzzer_btn = NULL;  // 蜂鸣器控制按钮
 static lv_obj_t *bg_canvas = NULL;  // 背景图canvas
 static bool need_show_main_screen = false;  // 标志位：需要在主循环中显示主屏幕
 
-/* 正确密码 */
-#define CORRECT_PASSWORD "114514"
-#define MAX_PASSWORD_LEN 32
+/* 正确密码 - 已移至 login_config.h，如果配置文件不存在则使用默认值 */
 
 /**
  * @brief 触发蜂鸣器（短响）

@@ -10,12 +10,28 @@
 
 ## 系统要求
 
+### 目标设备（GEC6818）
+
 - **目标平台**: ARM Linux (ARMv7)
 - **开发板**: 粤嵌 GEC6818
 - **编译器**: `arm-linux-gnueabihf-gcc`
 - **显示设备**: `/dev/fb0` (framebuffer)
 - **输入设备**: 触摸屏
 - **依赖**: MPlayer (用于音视频播放)
+
+### Ubuntu虚拟机测试环境
+
+项目支持在Ubuntu虚拟机上编译和测试（主要用于测试UI界面和协作绘图网络功能）：
+
+- **平台**: x86_64 Linux (Ubuntu)
+- **编译器**: `gcc`
+- **显示驱动**: SDL2 (窗口显示)
+- **输入设备**: SDL鼠标（模拟触摸）
+- **依赖**: `libsdl2-dev`
+
+详细说明请参考：
+- `UBUNTU_VM_SETUP.md` - 快速设置指南
+- `UBUNTU_VM_TEST_GUIDE.md` - 详细测试指南
 
 ## 快速开始
 
@@ -58,6 +74,30 @@ chmod +x rebuild.sh
 ```bash
 ./demo
 ```
+
+### Ubuntu虚拟机编译（可选）
+
+如果你想在Ubuntu虚拟机上测试UI界面和协作绘图网络功能：
+
+```bash
+# 1. 安装依赖
+sudo apt update
+sudo apt install -y build-essential gcc make libsdl2-dev git
+
+# 2. 编译（使用Ubuntu版本的Makefile）
+make -f Makefile.ubuntu clean
+make -f Makefile.ubuntu
+
+# 3. 运行
+./demo_ubuntu
+```
+
+**注意**: 
+- 虚拟机版本使用SDL窗口显示，鼠标模拟触摸
+- 触摸绘图功能在虚拟机上可能无法完全工作（需要framebuffer设备）
+- 协作绘图的网络功能可以正常测试
+
+详细说明请参考 `UBUNTU_VM_SETUP.md` 和 `UBUNTU_VM_TEST_GUIDE.md`。
 
 ## 项目结构
 
@@ -176,9 +216,11 @@ chmod +x rebuild.sh
   - 实时同步：绘图操作实时同步到所有参与者
   - 自动断线检测和重连
 - **配置说明**：
-  - 需要在 `src/touch_draw/touch_draw.c` 中配置巴法云设备名称和私钥
+  - 需要创建配置文件 `src/collaborative_draw/collaborative_draw_config.h`
+  - 复制模板文件 `src/collaborative_draw/collaborative_draw_config.h.example` 并重命名
+  - 在配置文件中设置您的巴法云设备名称和私钥
   - 设备名称：`your_device_name`（作为TCP协议的主题）
-  - 私钥：`your_password`（作为TCP协议的UID）
+  - 私钥：`your_private_key`（作为TCP协议的UID）
   - 详细配置和使用说明请参考 `src/collaborative_draw/README.md`
 
 ## 配置说明
@@ -196,24 +238,46 @@ chmod +x rebuild.sh
 
 ### 协作绘图配置
 
-协作绘图功能需要在 `src/touch_draw/touch_draw.c` 中配置：
+协作绘图功能需要通过配置文件进行配置：
 
-```c
-collaborative_draw_config_t collab_config = {
-    .enabled = true,
-    .server_host = "bemfa.com",
-    .server_port = 8344,
-    .device_name = "your_device_name",    // 替换为您的设备名称
-    .private_key = "your_password"        // 替换为您的巴法云私钥
-};
-```
+1. **创建配置文件**：
+   ```bash
+   cp src/collaborative_draw/collaborative_draw_config.h.example \
+      src/collaborative_draw/collaborative_draw_config.h
+   ```
 
-**重要提示**：
-- 使用前请先注册巴法云账号并创建TCP设备
-- 将代码中的占位符替换为实际的设备名称和私钥
-- 不要将包含真实密钥的代码提交到公开仓库
+2. **编辑配置文件**：
+   打开 `src/collaborative_draw/collaborative_draw_config.h`，替换占位符：
+   ```c
+   #define COLLAB_DEVICE_NAME "your_device_name"    // 替换为您的设备名称
+   #define COLLAB_PRIVATE_KEY "your_private_key"    // 替换为您的巴法云私钥
+   ```
+
+3. **重要提示**：
+   - 使用前请先注册巴法云账号并创建TCP设备
+   - 配置文件 `collaborative_draw_config.h` 已添加到 `.gitignore`，不会被提交到仓库
+   - 不要将包含真实密钥的配置文件提交到公开仓库
 
 详细配置说明请参考 `src/collaborative_draw/README.md`。
+
+### 登录密码配置
+
+登录密码功能需要通过配置文件进行配置：
+
+1. **创建配置文件**：
+   ```bash
+   cp src/ui/login_config.h.example src/ui/login_config.h
+   ```
+
+2. **编辑配置文件**：
+   打开 `src/ui/login_config.h`，替换占位符：
+   ```c
+   #define CORRECT_PASSWORD "your_password_here"    // 替换为您的登录密码
+   ```
+
+3. **重要提示**：
+   - 配置文件 `login_config.h` 已添加到 `.gitignore`，不会被提交到仓库
+   - 不要将包含真实密码的配置文件提交到公开仓库
 
 ### 编译选项
 

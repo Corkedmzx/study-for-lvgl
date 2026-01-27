@@ -1,0 +1,20 @@
+/**
+ * @file login_config.h.example
+ * @brief 登录密码配置模板文件
+ * 
+ * 使用说明：
+ * 1. 复制此文件为 login_config.h
+ * 2. 替换下面的占位符为您的实际密码
+ * 3. login_config.h 已添加到 .gitignore，不会被提交到仓库
+ */
+
+#ifndef LOGIN_CONFIG_H
+#define LOGIN_CONFIG_H
+
+// 登录密码（最大32个字符）
+#define CORRECT_PASSWORD "your_password_here"
+
+// 最大密码长度
+#define MAX_PASSWORD_LEN 32
+
+#endif /* LOGIN_CONFIG_H */

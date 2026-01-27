@@ -54,3 +54,7 @@ dkms.conf
 
 # ignore specific source files
 src/touch_draw/touch_draw.c
+
+# Configuration files with sensitive information
+src/collaborative_draw/collaborative_draw_config.h
+src/ui/login_config.h

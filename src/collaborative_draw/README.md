@@ -117,22 +117,28 @@ cmd=0&res=1\r\n
 
 ## 使用说明
 
+### 配置
+
+1. **创建配置文件**：
+   ```bash
+   cp collaborative_draw_config.h.example collaborative_draw_config.h
+   ```
+
+2. **编辑配置文件**：
+   打开 `collaborative_draw_config.h`，替换占位符：
+   ```c
+   #define COLLAB_DEVICE_NAME "your_device_name"    // 替换为您的设备名称
+   #define COLLAB_PRIVATE_KEY "your_private_key"    // 替换为您的巴法云私钥
+   ```
+
+3. **重要提示**：
+   - 配置文件 `collaborative_draw_config.h` 已添加到 `.gitignore`，不会被提交到仓库
+   - 不要将包含真实密钥的配置文件提交到公开仓库
+   - 如果配置文件不存在，代码将使用默认占位符（不会正常工作）
+
 ### 初始化
 
-```c
-collaborative_draw_config_t config = {
-    .enabled = true,
-    .server_host = "bemfa.com",
-    .server_port = 8344,
-    .user_id = 1,
-    .room_id = "default_room",  // 保留字段，未使用
-    .device_name = "your_device_name",
-    .private_key = "your_password"
-};
-
-collaborative_draw_init(&config);
-collaborative_draw_start();
-```
+配置完成后，代码会自动从配置文件中读取设备名称和私钥。初始化过程在 `touch_draw.c` 中自动完成，无需手动调用。
 
 ### 发送绘图操作
 

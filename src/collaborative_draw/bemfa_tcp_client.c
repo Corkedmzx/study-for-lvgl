@@ -235,7 +235,7 @@ static int parse_tcp_response(bemfa_tcp_client_t *client, const char *buf, int l
         temp[--len] = '\0';
     }
     
-    printf("[BemfaTCP] 收到响应: %s\n", temp);
+    printf("[BemfaTCP] 收到响应: %s (长度=%d)\n", temp, (int)strlen(temp));
     
     // 解析响应
     if (strncmp(temp, "cmd=0&res=1", 11) == 0) {
@@ -244,12 +244,30 @@ static int parse_tcp_response(bemfa_tcp_client_t *client, const char *buf, int l
         return 0;
     } else if (strncmp(temp, "cmd=1&res=1", 11) == 0) {
         // 订阅成功响应
-        printf("[BemfaTCP] 订阅成功\n");
+        printf("[BemfaTCP] ========== 订阅成功 (cmd=1&res=1) ==========\n");
         return 0;
+    } else if (strncmp(temp, "cmd=1&res=0", 11) == 0) {
+        // 订阅失败响应
+        printf("[BemfaTCP] ========== 订阅失败（服务器返回res=0）==========\n");
+        printf("[BemfaTCP] 可能原因：\n");
+        printf("[BemfaTCP]   1. 密钥(UID)错误: %s\n", client->config.uid);
+        printf("[BemfaTCP]   2. 主题不存在或格式错误: %s\n", client->config.topic);
+        printf("[BemfaTCP]   3. 服务器限制或网络问题\n");
+        printf("[BemfaTCP] 警告：订阅失败，更新状态为错误\n");
+        // 更新状态为错误，让网络线程检测到并退出
+        client->state = BEMFA_TCP_STATE_ERROR;
+        if (client->state_callback) {
+            client->state_callback(client->state, client->state_user_data);
+        }
+        return -1;
     } else if (strncmp(temp, "cmd=2&res=1", 11) == 0) {
         // 发布成功响应
         printf("[BemfaTCP] 发布成功\n");
         return 0;
+    } else if (strncmp(temp, "cmd=2&res=0", 11) == 0) {
+        // 发布失败响应
+        printf("[BemfaTCP] 发布失败\n");
+        return -1;
     } else if (strncmp(temp, "cmd=", 4) == 0) {
         // 消息格式: cmd=1&uid=xxx&topic=xxx&msg=xxx 或 cmd=9&uid=xxx&topic=xxx&msg=xxx
         // 解析消息
@@ -282,7 +300,11 @@ static int parse_tcp_response(bemfa_tcp_client_t *client, const char *buf, int l
         }
         
         if (topic && msg && client->msg_callback) {
+            printf("[BemfaTCP] 解析到消息: topic=%s, msg_len=%zu\n", topic, strlen(msg));
             client->msg_callback(topic, msg, strlen(msg), client->msg_user_data);
+        } else {
+            printf("[BemfaTCP] 警告：消息解析失败或回调未设置: topic=%p, msg=%p, callback=%p\n", 
+                   topic, msg, client->msg_callback);
         }
         
         if (topic) free(topic);
@@ -296,7 +318,16 @@ static int parse_tcp_response(bemfa_tcp_client_t *client, const char *buf, int l
 
 int bemfa_tcp_loop(bemfa_tcp_handle_t handle) {
     bemfa_tcp_client_t *client = (bemfa_tcp_client_t *)handle;
-    if (!client || client->state != BEMFA_TCP_STATE_CONNECTED) {
+    if (!client) {
+        return -1;
+    }
+    // 允许在CONNECTED状态下处理响应（ERROR状态可能是订阅失败，但需要先处理响应）
+    if (client->state != BEMFA_TCP_STATE_CONNECTED) {
+        // 如果已经是ERROR状态，不再处理（避免重复处理）
+        if (client->state == BEMFA_TCP_STATE_ERROR) {
+            return -1;
+        }
+        printf("[BemfaTCP] 状态不是CONNECTED，跳过处理: state=%d\n", client->state);
         return -1;
     }
     
@@ -312,17 +343,20 @@ int bemfa_tcp_loop(bemfa_tcp_handle_t handle) {
     
     if (received > 0) {
         buf[received] = '\0';
+        printf("[BemfaTCP] 收到数据: %s (长度=%d)\n", buf, received);
         // 可能有多个响应，按\r\n分割
         char *line = buf;
         char *next;
         while ((next = strstr(line, "\r\n")) != NULL) {
             *next = '\0';
+            printf("[BemfaTCP] 处理一行: %s\n", line);
             parse_tcp_response(client, line, next - line);
             line = next + 2;
             if (line >= buf + received) break;
         }
         // 处理最后一行（如果没有\r\n结尾）
         if (line < buf + received && strlen(line) > 0) {
+            printf("[BemfaTCP] 处理最后一行: %s\n", line);
             parse_tcp_response(client, line, strlen(line));
         }
         return 0;
