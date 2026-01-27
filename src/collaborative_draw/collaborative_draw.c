@@ -61,29 +61,37 @@ static int hex_to_bin(const char *hex, uint8_t *bin, int bin_size) {
 static void bemfa_tcp_message_handler(const char *topic, const char *msg, size_t msg_len, void *user_data) {
     (void)user_data;
     
-    printf("[协作绘图] 收到消息: topic=%s, msg_len=%zu, state=%d, threads_running=%d\n", 
-           topic ? topic : "NULL", msg_len, g_collab_draw.state, g_collab_draw.threads_running);
+    // 调试日志控制
+    static int msg_count = 0;
+    msg_count++;
+    bool debug_enabled = false;  // 可以通过编译选项控制
+    
+    if (debug_enabled && msg_count % 100 == 0) {
+        printf("[协作绘图] 收到消息 #%d: topic=%s, msg_len=%zu, state=%d\n", 
+               msg_count, topic ? topic : "NULL", msg_len, g_collab_draw.state);
+    }
     
     // 检查状态，如果正在清理或已断开，忽略消息
     if (g_collab_draw.state != COLLAB_DRAW_STATE_CONNECTED || !g_collab_draw.threads_running) {
-        printf("[协作绘图] 状态检查失败，忽略消息: state=%d, threads_running=%d\n", 
-               g_collab_draw.state, g_collab_draw.threads_running);
+        if (debug_enabled && msg_count % 100 == 0) {
+            printf("[协作绘图] 状态检查失败，忽略消息: state=%d, threads_running=%d\n", 
+                   g_collab_draw.state, g_collab_draw.threads_running);
+        }
         return;
     }
     
     // 检查回调函数是否有效
     if (!g_collab_draw.remote_draw_callback) {
-        printf("[协作绘图] 警告：remote_draw_callback未设置\n");
+        if (debug_enabled && msg_count % 100 == 0) {
+            printf("[协作绘图] 警告：remote_draw_callback未设置\n");
+        }
         return;
     }
     
     // 检查消息是否有效
     if (!msg || msg_len == 0) {
-        printf("[协作绘图] 消息无效: msg=%p, msg_len=%zu\n", msg, msg_len);
         return;
     }
-    
-    printf("[协作绘图] 开始解码消息: %s\n", msg);
     
     // 将十六进制字符串解码为二进制数据
     uint8_t buffer[256];
@@ -93,25 +101,17 @@ static void bemfa_tcp_message_handler(const char *topic, const char *msg, size_t
         return;
     }
     
-    printf("[协作绘图] 十六进制解码成功: bin_len=%d\n", bin_len);
-    
-    // 打印原始二进制数据（前32字节，用于调试）
-    printf("[协作绘图] 原始二进制数据（前32字节）: ");
-    for (int i = 0; i < bin_len && i < 32; i++) {
-        printf("%02X ", buffer[i]);
-    }
-    printf("\n");
-    
     // 解码绘图操作
     draw_operation_t op;
     if (draw_operation_decode(buffer, bin_len, &op) == 0) {
-        printf("[协作绘图] 解码绘图操作成功: user_id=0x%08X, timestamp=%u, msg_type=%d, x=%d, y=%d, prev_x=%d, prev_y=%d, pen_size=%d, color=0x%08X, is_eraser=%d\n",
-               op.user_id, op.timestamp, op.msg_type, op.x, op.y, op.prev_x, op.prev_y, op.pen_size, op.color, op.is_eraser);
+        if (debug_enabled && msg_count % 100 == 0) {
+            printf("[协作绘图] 解码绘图操作成功: x=%d, y=%d, pen_size=%d\n",
+                   op.x, op.y, op.pen_size);
+        }
         
         // 检查消息类型
         if (op.msg_type == MSG_TYPE_CLEAR) {
             // 清屏操作：通过回调函数传递特殊参数（pen_size=0表示清屏）
-            printf("[协作绘图] 收到清屏操作\n");
             if (g_collab_draw.state == COLLAB_DRAW_STATE_CONNECTED && 
                 g_collab_draw.threads_running && 
                 g_collab_draw.remote_draw_callback) {
@@ -120,31 +120,24 @@ static void bemfa_tcp_message_handler(const char *topic, const char *msg, size_t
                     0, 0, 0, 0,
                     0, 0xFFFFFFFF, false,  // pen_size=0表示清屏，color=白色
                     g_collab_draw.remote_draw_user_data);
-                printf("[协作绘图] 清屏操作已处理\n");
             }
             return;
         }
         
         // 检查pen_size是否有效（pen_size=0表示无效数据）
         if (op.pen_size == 0) {
-            printf("[协作绘图] 警告：pen_size=0，跳过绘制（可能是无效数据）\n");
             return;
         }
         
         // 再次检查状态和回调（防止在解码过程中状态改变）
-        if (g_collab_draw.state == COLLAB_DRAW_STATE_CONNECTED && 
+        if (g_collab_draw.state == COLLAB_DRAW_STATE_CONNECTED &&
             g_collab_draw.threads_running && 
             g_collab_draw.remote_draw_callback) {
-            printf("[协作绘图] 调用remote_draw_callback\n");
-            // 调用回调函数绘制（使用try-catch保护，但C中需要手动检查）
+            // 直接调用回调函数绘制（不打印日志以提高性能）
             g_collab_draw.remote_draw_callback(
                 op.x, op.y, op.prev_x, op.prev_y,
                 op.pen_size, op.color, op.is_eraser,
                 g_collab_draw.remote_draw_user_data);
-            printf("[协作绘图] remote_draw_callback调用完成\n");
-        } else {
-            printf("[协作绘图] 状态检查失败（解码后）: state=%d, threads_running=%d, callback=%p\n",
-                   g_collab_draw.state, g_collab_draw.threads_running, g_collab_draw.remote_draw_callback);
         }
     } else {
         printf("[协作绘图] 解码绘图操作失败\n");

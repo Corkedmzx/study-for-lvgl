@@ -52,10 +52,16 @@ git submodule update --init --recursive
 
 ### 3. 编译项目
 
+#### 开发板端编译（GEC6818）
+
 在项目根目录执行：
 
 ```bash
-make clean && make
+# 清理之前的编译文件
+make -f Makefile.gec6818 clean
+
+# 编译项目
+make -f Makefile.gec6818
 ```
 
 或者使用提供的重建脚本：
@@ -67,7 +73,74 @@ chmod +x rebuild.sh
 
 编译完成后，可执行文件 `demo` 将生成在项目根目录。
 
+#### Ubuntu虚拟机编译（可选 - 主要用于测试多人协作白板）
+
+**重要提示**：虚拟机上的编译主要用于测试多人协作白板的网络通信功能。要体验完整的协作绘图功能（包括触摸绘图、实时绘制等），请使用两个相同型号的开发板（GEC6818）。
+
+虚拟机版本主要用于：
+- 测试协作绘图的网络连接和数据同步
+- 验证巴法云TCP协议的通信功能
+- 调试网络相关的代码
+
+如果你想在Ubuntu虚拟机上测试协作绘图网络功能：
+
+```bash
+# 1. 安装依赖
+sudo apt update
+sudo apt install -y build-essential gcc make libsdl2-dev git
+
+# 2. 清理之前的编译文件
+make clean
+
+# 3. 编译（使用Ubuntu版本的Makefile）
+make
+
+# 4. 运行
+./demo_ubuntu
+```
+
+**限制说明**: 
+- 虚拟机版本使用SDL窗口显示，鼠标模拟触摸
+- 触摸绘图功能在虚拟机上可能无法完全工作（需要framebuffer设备）
+- 协作绘图的网络功能可以正常测试，但无法体验完整的触摸绘图体验
+- **完整功能体验**：请使用两个相同型号的开发板（GEC6818）进行测试
+
+详细说明请参考 `UBUNTU_VM_SETUP.md` 和 `UBUNTU_VM_TEST_GUIDE.md`。
+
+#### 双端清理和编译
+
+如果你需要在开发板和虚拟机两个环境中都进行编译，可以按以下步骤操作：
+
+**开发板端（GEC6818）**：
+```bash
+# 清理
+make -f Makefile.gec6818 clean
+
+# 编译
+make -f Makefile.gec6818
+
+# 生成的可执行文件：demo
+```
+
+**虚拟机端（Ubuntu）**：
+```bash
+# 清理
+make clean
+
+# 编译
+make
+
+# 生成的可执行文件：demo_ubuntu
+```
+
+**提示**：
+- 两个环境的编译产物互不干扰（开发板使用 `build/` 目录，虚拟机使用 `build_ubuntu/` 目录）
+- 可以同时保留两个环境的编译产物，方便在不同环境中测试
+- 如果只想清理某个环境的编译文件，使用对应的 `clean` 命令即可
+
 ### 4. 运行
+
+#### 开发板端运行
 
 将编译好的 `demo` 文件传输到目标设备（GEC6818），然后运行：
 
@@ -75,29 +148,13 @@ chmod +x rebuild.sh
 ./demo
 ```
 
-### Ubuntu虚拟机编译（可选）
+#### 虚拟机端运行
 
-如果你想在Ubuntu虚拟机上测试UI界面和协作绘图网络功能：
+在Ubuntu虚拟机上直接运行：
 
 ```bash
-# 1. 安装依赖
-sudo apt update
-sudo apt install -y build-essential gcc make libsdl2-dev git
-
-# 2. 编译（使用Ubuntu版本的Makefile）
-make -f Makefile.ubuntu clean
-make -f Makefile.ubuntu
-
-# 3. 运行
 ./demo_ubuntu
 ```
-
-**注意**: 
-- 虚拟机版本使用SDL窗口显示，鼠标模拟触摸
-- 触摸绘图功能在虚拟机上可能无法完全工作（需要framebuffer设备）
-- 协作绘图的网络功能可以正常测试
-
-详细说明请参考 `UBUNTU_VM_SETUP.md` 和 `UBUNTU_VM_TEST_GUIDE.md`。
 
 ## 项目结构
 
@@ -215,6 +272,10 @@ make -f Makefile.ubuntu
   - 客机模式：加入他人的协作房间
   - 实时同步：绘图操作实时同步到所有参与者
   - 自动断线检测和重连
+- **使用建议**：
+  - **完整功能体验**：使用两个相同型号的开发板（GEC6818）进行测试
+  - **网络功能测试**：可以在Ubuntu虚拟机上测试网络连接和数据同步功能
+  - 虚拟机版本主要用于验证网络通信，无法体验完整的触摸绘图功能
 - **配置说明**：
   - 需要创建配置文件 `src/collaborative_draw/collaborative_draw_config.h`
   - 复制模板文件 `src/collaborative_draw/collaborative_draw_config.h.example` 并重命名
@@ -348,6 +409,8 @@ make -f Makefile.ubuntu
 
 ### 协作绘图操作
 
+**重要提示**：要体验完整的协作绘图功能，请使用两个相同型号的开发板（GEC6818）。虚拟机版本主要用于测试网络通信功能。
+
 1. **进入绘图界面**：从主界面点击"绘图"按钮
 2. **连接协作**：
    - 点击"连接协作"按钮创建协作房间（主机模式）
@@ -355,10 +418,14 @@ make -f Makefile.ubuntu
    - 连接成功后，所有参与者的绘图操作将实时同步
 3. **绘图功能**：
    - 选择笔触大小和颜色
-   - 直接在屏幕上绘制
+   - 直接在屏幕上绘制（需要开发板支持触摸屏）
    - 使用橡皮擦功能擦除
    - 使用清屏功能清除所有内容
 4. **结束协作**：点击"结束协作"按钮断开连接
+
+**测试建议**：
+- **完整功能**：使用两个GEC6818开发板，分别作为主机和客机
+- **网络测试**：可以使用虚拟机 + 开发板，或两个虚拟机实例测试网络连接
 
 详细使用说明请参考 `src/touch_draw/README.md` 和 `src/collaborative_draw/README.md`。
 

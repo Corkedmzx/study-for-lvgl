@@ -52,9 +52,12 @@ Mkfile.old
 dkms.conf
 /Debug/
 
-# ignore specific source files
+# ignore specific source files (包含敏感信息的原始文件)
 src/touch_draw/touch_draw.c
 
 # Configuration files with sensitive information
 src/collaborative_draw/collaborative_draw_config.h
 src/ui/login_config.h
+
+# Git版本文件（不含敏感信息，可以提交）
+# src/touch_draw/touch_draw.c.git 应该被提交，不忽略

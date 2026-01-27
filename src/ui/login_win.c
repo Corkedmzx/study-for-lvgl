@@ -30,7 +30,7 @@
     #define MAX_PASSWORD_LEN 32
 #endif
 // 取消注释下面这行以使用配置文件（创建配置文件后）
-// #include "login_config.h"
+#include "login_config.h"
 
 /* 声明FontAwesome字体 */
 extern const lv_font_t fa_solid_24;
